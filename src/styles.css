@@ -30,6 +30,9 @@ a { color: inherit; text-decoration: none; }
 
 .chat-page { display: grid; gap: 12px; }
 .chat-header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+.chat-controls { display: flex; gap: 12px; flex-wrap: wrap; }
+.chat-cursor { animation: chat-blink 1s step-end infinite; }
+@keyframes chat-blink { 50% { opacity: 0; } }
 .model-picker { display: grid; gap: 4px; font-size: 0.9rem; }
 .chat-log { min-height: 280px; max-height: 50vh; overflow: auto; display: grid; gap: 8px; }
 .chat-line pre { white-space: pre-wrap; margin: 4px 0 0; font-family: inherit; }

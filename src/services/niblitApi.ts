@@ -5,6 +5,11 @@ export interface ChatResponse {
   error?: string;
 }
 
+export interface CloudChatMessage {
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+}
+
 export interface RuntimeStatus {
   status?: string;
   runtime_mode?: string;
@@ -50,6 +55,74 @@ export async function sendChat(text: string): Promise<ChatResponse> {
     return { reply: '', error: payload.error || `HTTP ${response.status}` };
   }
   return { reply: String(payload.reply ?? '') };
+}
+
+/** Stream tokens from cloud-server ``POST /v1/chat/completions`` (SSE). */
+export async function streamCloudChatCompletion(
+  messages: CloudChatMessage[],
+  model: string,
+  onToken: (token: string) => void,
+): Promise<void> {
+  const response = await fetch(cloudUrl('/v1/chat/completions'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model,
+      messages,
+      stream: true,
+    }),
+  });
+
+  if (!response.ok) {
+    let detail = `HTTP ${response.status}`;
+    try {
+      const payload = (await response.json()) as { error?: { message?: string } };
+      detail = payload.error?.message || detail;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(detail);
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw new Error('Cloud chat stream unavailable (no response body)');
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('data:')) {
+        continue;
+      }
+      const data = trimmed.slice(5).trim();
+      if (data === '[DONE]') {
+        return;
+      }
+      try {
+        const parsed = JSON.parse(data) as {
+          choices?: Array<{ delta?: { content?: string } }>;
+        };
+        const token = parsed.choices?.[0]?.delta?.content;
+        if (token) {
+          onToken(token);
+        }
+      } catch {
+        /* ignore malformed SSE frames */
+      }
+    }
+  }
 }
 
 export async function fetchCloudModels(): Promise<ModelInfo[]> {
