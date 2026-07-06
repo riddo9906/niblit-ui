@@ -4,6 +4,7 @@ import type { LayerName } from '../types/runtime';
 
 const navigation: Array<{ to: To; label: string }> = [
   { to: '/', label: 'Overview' },
+  { to: '/chat', label: 'Chat' },
   { to: '/cognitive', label: 'Cognitive' },
   { to: '/inference', label: 'Inference' },
   { to: '/execution', label: 'Execution' },

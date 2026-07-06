@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useEventBus } from '../events/eventBus';
-import { startDemoRuntimeConnector } from '../services/runtimeConnector';
+import { startRuntimeConnector } from '../services/runtimeConnector';
 import type { LayerName, RuntimeEvent } from '../types/runtime';
 
 interface RuntimeStoreValue {
@@ -13,9 +13,9 @@ interface RuntimeStoreValue {
 }
 
 const layerStatusSeed: Record<LayerName, string> = {
-  cognitive: 'Healthy',
-  inference: 'Bridge active',
-  execution: 'Connected',
+  cognitive: 'Connecting…',
+  inference: 'Waiting',
+  execution: 'Waiting',
 };
 
 const RuntimeStoreContext = createContext<RuntimeStoreValue>({
@@ -34,12 +34,26 @@ export function RuntimeStoreProvider({ children }: { children: ReactNode }) {
   const [layerStatus, setLayerStatusState] = useState<Record<LayerName, string>>(layerStatusSeed);
 
   useEffect(() => {
-    return startDemoRuntimeConnector({
+    let cleanup: (() => void) | undefined;
+    let cancelled = false;
+
+    void startRuntimeConnector({
       pushEvent,
       setActiveLayer,
       setLayerStatus: setLayerStatusState,
       setHeartbeat,
+    }).then((stop) => {
+      if (cancelled) {
+        stop();
+        return;
+      }
+      cleanup = stop;
     });
+
+    return () => {
+      cancelled = true;
+      cleanup?.();
+    };
   }, [pushEvent]);
 
   const value = useMemo<RuntimeStoreValue>(() => ({
