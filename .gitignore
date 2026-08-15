@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+
+# Tauri artifacts
+src-tauri/target/
+target/
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+logs/
+*.log
+
+# Environment
+.env
+.env.local
+
+# Cache
+.cache/
+.temp/
+
+# TypeScript
+*.tsbuildinfo
+tsconfig.*.tsbuildinfo

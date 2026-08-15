@@ -9,6 +9,7 @@ const CognitivePage = lazy(() => import('./pages/CognitivePage'));
 const InferencePage = lazy(() => import('./pages/InferencePage'));
 const ExecutionPage = lazy(() => import('./pages/ExecutionPage'));
 const ChatPage = lazy(() => import('./pages/ChatPage'));
+const FilesPage = lazy(() => import('./pages/FilesPage'));
 
 function App() {
   return (
@@ -22,6 +23,7 @@ function App() {
               <Route path="/inference" element={<InferencePage />} />
               <Route path="/execution" element={<ExecutionPage />} />
               <Route path="/chat" element={<ChatPage />} />
+              <Route path="/files" element={<FilesPage />} />
             </Routes>
           </Suspense>
         </AppShell>

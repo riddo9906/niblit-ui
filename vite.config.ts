@@ -10,6 +10,22 @@ export default defineConfig(({ mode }) => {
     plugins: [react()],
     server: {
       port: Number(env.NIBLIT_UI_PORT || 5173),
+      watch: {
+        ignored: [
+          '**/src-tauri/target/**',
+          '**/target/**',
+          '**/*.dll',
+          '**/*.exe',
+          '**/*.pdb',
+          '**/*.rlib',
+          '**/*.rmeta',
+          '**/*.obj',
+          '**/*.lib',
+          '**/*.d',
+        ],
+        usePolling: true,
+        interval: 1000,
+      },
       proxy: {
         '/api': { target: apiTarget, changeOrigin: true },
         '/chat': { target: apiTarget, changeOrigin: true },

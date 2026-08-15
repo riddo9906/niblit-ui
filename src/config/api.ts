@@ -1,7 +1,7 @@
 const trimSlash = (value: string) => value.replace(/\/+$/, '');
 
 export const API_BASE_URL = trimSlash(
-  import.meta.env.VITE_NIBLIT_API_URL || 'http://127.0.0.1:8080',
+  import.meta.env.VITE_NIBLIT_API_URL || 'http://127.0.0.1:5000',
 );
 
 export const CLOUD_BASE_URL = trimSlash(

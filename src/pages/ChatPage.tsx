@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useEffect, useRef, useState } from 'react';
 import {
   CloudChatMessage,
   fetchCloudModels,
@@ -10,10 +10,18 @@ interface ChatMessage {
   id: string;
   role: 'user' | 'assistant' | 'system';
   text: string;
+  ts: string;
   streaming?: boolean;
 }
 
 type ChatMode = 'runtime' | 'inference';
+
+const examples = [
+  'Create a FastAPI backend',
+  'Explain this function',
+  'Refactor this class',
+  'Generate tests',
+];
 
 export default function ChatPage() {
   const [input, setInput] = useState('');
@@ -23,6 +31,8 @@ export default function ChatPage() {
   const [chatMode, setChatMode] = useState<ChatMode>('inference');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const logRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     void fetchCloudModels().then((items) => {
@@ -36,6 +46,14 @@ export default function ChatPage() {
       }
     });
   }, []);
+
+  useEffect(() => {
+    logRef.current?.scrollTo({ top: logRef.current.scrollHeight, behavior: 'smooth' });
+  }, [messages]);
+
+  function now(): string {
+    return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
 
   function updateAssistantText(assistantId: string, text: string, streaming = false) {
     setMessages((current) =>
@@ -84,12 +102,13 @@ export default function ChatPage() {
       id: `u-${Date.now()}`,
       role: 'user',
       text,
+      ts: now(),
     };
     const assistantId = `a-${Date.now()}`;
     setMessages((current) => [
       ...current,
       userMessage,
-      { id: assistantId, role: 'assistant', text: '', streaming: chatMode === 'inference' },
+      { id: assistantId, role: 'assistant', text: '', ts: now(), streaming: chatMode === 'inference' },
     ]);
 
     try {
@@ -113,79 +132,101 @@ export default function ChatPage() {
     }
   }
 
+  function useExample(text: string) {
+    setInput(text);
+    inputRef.current?.focus();
+  }
+
   return (
-    <div className="panel chat-page">
-      <header className="chat-header">
-        <div>
-          <h2>Chat</h2>
-          <p>
-            Runtime commands use the Niblit API; inference streams from cloud-server SSE — no
-            Python imports in the UI.
-          </p>
-        </div>
-        <div className="chat-controls">
-          <label className="model-picker">
-            <span>Mode</span>
-            <select
-              value={chatMode}
-              onChange={(event) => setChatMode(event.target.value as ChatMode)}
-            >
-              <option value="inference" disabled={models.length === 0}>
-                Inference (SSE)
-              </option>
-              <option value="runtime">Runtime command</option>
-            </select>
-          </label>
-          <label className="model-picker">
-            <span>Cloud model</span>
-            <select
-              value={selectedModel}
-              onChange={(event) => setSelectedModel(event.target.value)}
-              disabled={models.length === 0 || chatMode !== 'inference'}
-            >
-              {models.length === 0 ? (
-                <option value="local">local (cloud API offline)</option>
-              ) : (
-                models.map((modelId) => (
-                  <option key={modelId} value={modelId}>
-                    {modelId}
-                  </option>
-                ))
-              )}
-            </select>
-          </label>
-        </div>
-      </header>
-
-      {error ? <div className="chat-error">{error}</div> : null}
-
-      <div className="chat-log" aria-live="polite">
+    <div className="chat-page">
+      <div className="chat-log" ref={logRef} aria-live="polite">
         {messages.length === 0 ? (
-          <p className="chat-empty">Send a command or question to the Niblit backend.</p>
+          <div className="chat-empty-state">
+            <div className="chat-empty-title">Ask Niblit...</div>
+            <div className="chat-empty-subtitle">
+              Your local coding assistant — 100% offline via llama.cpp
+            </div>
+            <div className="chat-examples">
+              {examples.map((example) => (
+                <button
+                  key={example}
+                  type="button"
+                  className="chat-example-btn"
+                  onClick={() => useExample(example)}
+                >
+                  {example}
+                </button>
+              ))}
+            </div>
+          </div>
         ) : (
           messages.map((message) => (
-            <div key={message.id} className={`chat-line chat-line-${message.role}`}>
-              <strong>{message.role}</strong>
-              <pre>
-                {message.text}
+            <div
+              key={message.id}
+              className={`chat-bubble chat-bubble-${message.role}`}
+            >
+              <div className="chat-bubble-header">
+                <span className="chat-role">
+                  {message.role === 'user' ? 'You' : 'LocalCoder'}
+                </span>
+                <span className="chat-ts">{message.ts}</span>
+                {message.role === 'assistant' && message.streaming && (
+                  <span className="chat-streaming">
+                    <span className="chat-streaming-dot" />
+                    streaming…
+                  </span>
+                )}
+              </div>
+              <div className="chat-bubble-content">
+                {message.text.split('**').map((part, i) =>
+                  i % 2 === 1 ? (
+                    <strong key={i} className="chat-strong">
+                      {part}
+                    </strong>
+                  ) : (
+                    <span key={i}>{part}</span>
+                  ),
+                )}
                 {message.streaming ? <span className="chat-cursor">▍</span> : null}
-              </pre>
+              </div>
             </div>
           ))
         )}
       </div>
 
-      <form className="chat-form" onSubmit={onSubmit}>
-        <input
-          value={input}
-          onChange={(event) => setInput(event.target.value)}
-          placeholder={chatMode === 'inference' ? 'Ask the cloud model…' : 'Send a runtime command…'}
-          disabled={busy}
-        />
-        <button type="submit" disabled={busy}>
-          {busy ? 'Sending…' : 'Send'}
-        </button>
-      </form>
+      {error ? <div className="chat-error">{error}</div> : null}
+
+      <div className="chat-input-area">
+        <div className="chat-input-container">
+          <textarea
+            ref={inputRef}
+            value={input}
+            onChange={(event) => setInput(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                void onSubmit(event);
+              }
+            }}
+            placeholder="Ask Niblit — explain, fix, generate, refactor… (Shift+Enter for newline)"
+            disabled={busy}
+            rows={1}
+          />
+          <button
+            type="button"
+            className="chat-send-btn"
+            onClick={(event) => void onSubmit(event)}
+            disabled={!input.trim() || busy}
+          >
+            {busy ? 'Sending…' : 'Send'}
+          </button>
+        </div>
+        <div className="chat-input-footer">
+          <span className="chat-input-hint">
+            llama-server • POST /v1/chat/completions • stream
+          </span>
+        </div>
+      </div>
     </div>
   );
 }
