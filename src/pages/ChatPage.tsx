@@ -4,7 +4,10 @@ import {
   fetchCloudModels,
   sendChat,
   streamCloudChatCompletion,
+  fetchRuntimeStatus,
 } from '../services/niblitApi';
+import { useRuntimeStore } from '../state/runtimeStore';
+import { cn } from '../lib/utils';
 
 interface ChatMessage {
   id: string;
@@ -24,6 +27,7 @@ const examples = [
 ];
 
 export default function ChatPage() {
+  const { events } = useRuntimeStore();
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [models, setModels] = useState<string[]>([]);
@@ -31,6 +35,7 @@ export default function ChatPage() {
   const [chatMode, setChatMode] = useState<ChatMode>('inference');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [runtimeStatus, setRuntimeStatus] = useState<'operational' | 'degraded' | 'offline'>('operational');
   const logRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -43,6 +48,11 @@ export default function ChatPage() {
         setChatMode('inference');
       } else {
         setChatMode('runtime');
+      }
+    });
+    void fetchRuntimeStatus().then((status) => {
+      if (status) {
+        setRuntimeStatus('operational');
       }
     });
   }, []);
@@ -137,8 +147,43 @@ export default function ChatPage() {
     inputRef.current?.focus();
   }
 
+  function getActivityText(): string {
+    if (events.length === 0) {
+      return 'Ready';
+    }
+    const lastEvent = events[0];
+    const type = lastEvent.type;
+    if (type.includes('model') || type.includes('inference')) {
+      return 'Thinking…';
+    }
+    if (type.includes('memory')) {
+      return 'Retrieving memory…';
+    }
+    if (type.includes('tool') || type.includes('execution')) {
+      return 'Using tool…';
+    }
+    if (type.includes('heartbeat')) {
+      return 'Active';
+    }
+    return 'Working…';
+  }
+
+  function getActivityColor(): string {
+    if (runtimeStatus === 'degraded') {
+      return 'runtime-dot--warn';
+    }
+    if (runtimeStatus === 'offline') {
+      return 'runtime-dot--danger';
+    }
+    return 'runtime-dot--ok';
+  }
+
   return (
     <div className="chat-page">
+      <div className="runtime-strip">
+        <span className={cn('runtime-dot', getActivityColor())} />
+        <span>◌ {getActivityText()}</span>
+      </div>
       <div className="chat-log" ref={logRef} aria-live="polite">
         {messages.length === 0 ? (
           <div className="chat-empty-state">
