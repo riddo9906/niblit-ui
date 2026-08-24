@@ -1,9 +1,9 @@
 import { FormEvent, useEffect, useRef, useState } from 'react';
 import {
   CloudChatMessage,
-  fetchCloudModels,
+  fetchInferenceModels,
   sendChat,
-  streamCloudChatCompletion,
+  streamInferenceChat,
 } from '../services/niblitApi';
 import { useRuntimeStore } from '../state/runtimeStore';
 import { cn } from '../lib/utils';
@@ -72,7 +72,7 @@ export default function ChatPage() {
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    void fetchCloudModels().then((items) => {
+    void fetchInferenceModels().then((items) => {
       const ids = items.map((item) => item.id).filter(Boolean);
       setModels(ids);
       if (ids.length > 0) {
@@ -121,7 +121,7 @@ export default function ChatPage() {
     history.push({ role: 'user', content: attachmentContext ? `${attachmentContext}\n\n${text}` : text });
 
     let accumulated = '';
-    await streamCloudChatCompletion(history, selectedModel, (token) => {
+    await streamInferenceChat(history, selectedModel, (token) => {
       accumulated += token;
       updateAssistantText(assistantId, accumulated, true);
     }, signal);

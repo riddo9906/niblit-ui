@@ -1,4 +1,4 @@
-import { API_BASE_URL, apiUrl, cloudUrl } from '../config/api';
+import { API_BASE_URL, apiUrl } from '../config/api';
 
 export interface ChatResponse {
   reply: string;
@@ -59,13 +59,13 @@ export async function sendChat(text: string, signal?: AbortSignal): Promise<Chat
 }
 
 /** Stream tokens from cloud-server ``POST /v1/chat/completions`` (SSE). */
-export async function streamCloudChatCompletion(
+export async function streamInferenceChat(
   messages: CloudChatMessage[],
   model: string,
   onToken: (token: string) => void,
   signal?: AbortSignal,
 ): Promise<void> {
-  const response = await fetch(cloudUrl('/v1/chat/completions'), {
+  const response = await fetch(apiUrl('/v1/inference/chat'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -79,8 +79,10 @@ export async function streamCloudChatCompletion(
   if (!response.ok) {
     let detail = `HTTP ${response.status}`;
     try {
-      const payload = (await response.json()) as { error?: { message?: string } };
-      detail = payload.error?.message || detail;
+      const payload = (await response.json()) as {
+        error?: { code?: string; message?: string };
+      };
+      detail = payload.error?.message || payload.error?.code || detail;
     } catch {
       /* ignore */
     }
@@ -128,9 +130,9 @@ export async function streamCloudChatCompletion(
   }
 }
 
-export async function fetchCloudModels(): Promise<ModelInfo[]> {
+export async function fetchInferenceModels(): Promise<ModelInfo[]> {
   try {
-    const response = await fetch(cloudUrl('/v1/models'));
+    const response = await fetch(apiUrl('/v1/inference/models'));
     if (!response.ok) {
       return [];
     }
@@ -143,7 +145,7 @@ export async function fetchCloudModels(): Promise<ModelInfo[]> {
 
 export async function fetchCloudRuntimeStatus(): Promise<Record<string, unknown> | null> {
   try {
-    const response = await fetch(cloudUrl('/v1/runtime/status'));
+    const response = await fetch(apiUrl('/v1/inference/health'));
     if (!response.ok) {
       return null;
     }
