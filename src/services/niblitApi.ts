@@ -44,11 +44,12 @@ export async function fetchRuntimeStatus(): Promise<RuntimeStatus | null> {
   }
 }
 
-export async function sendChat(text: string): Promise<ChatResponse> {
+export async function sendChat(text: string, signal?: AbortSignal): Promise<ChatResponse> {
   const response = await fetch(apiUrl('/chat'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ text }),
+    signal,
   });
   const payload = (await response.json()) as ChatResponse & { error?: string };
   if (!response.ok) {
@@ -62,6 +63,7 @@ export async function streamCloudChatCompletion(
   messages: CloudChatMessage[],
   model: string,
   onToken: (token: string) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   const response = await fetch(cloudUrl('/v1/chat/completions'), {
     method: 'POST',
@@ -71,6 +73,7 @@ export async function streamCloudChatCompletion(
       messages,
       stream: true,
     }),
+    signal,
   });
 
   if (!response.ok) {

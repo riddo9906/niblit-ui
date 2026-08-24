@@ -101,7 +101,8 @@ Trading `:8100` endpoints (`/v1/runtime/status`, `/v1/market/*`, `/v1/portfolio`
 ## 10. File Explorer / Renderer (Phase 10)
 
 - Existing `FilesPage` (breadcrumbs, selected-file state, size/time metadata, `FileViewer`, renderer integration) is preserved unchanged.
-- The base-renderer registration defect (`BaseRenderer.get_supported_extensions` missing `self`) is a **backend** issue. If the backend still emits a renderer error, `FilesPage`/`FileViewer` surface a useful error state rather than a blank preview panel (documented in §14).
+- **Renderer registration defect — CONFIRMED FIXED** in the backend: `core/renderers/base.py` now declares `get_supported_extensions` as a `@classmethod def get_supported_extensions(cls) -> list[str]` (previously it was missing the classmethod decorator / used `self`). `registry.py:28` and `factory.py:108` both invoke it on the renderer **class**, which now works, so `/api/file/types` and `/api/file/render` register and map extensions correctly.
+- UI `fileRenderer.ts` (`getSupportedTypes`, `renderFile`, `getFilePreview`) is wired to those endpoints; if a renderer still fails at runtime, `FilesPage`/`FileViewer` surface a useful error state rather than a blank preview panel.
 
 ---
 
@@ -165,7 +166,12 @@ Every important panel shows a deliberate state rather than a blank:
 1. **Memory view (Qdrant counts, collections, semantic search)** — no memory/`search`/`collections` endpoint on `:5000` or `:8000`. UI shows "Unavailable / pending".
 2. **Trading `:8100` read-only surface** — runtime/status/market/portfolio/positions/executions exist on the trading process, but there is no wiring in the UI backplane; UI avoids inventing dependency. Execution status is shown; a console is scaffolded for future wiring.
 3. **CPU / RAM / GPU / live model state** — no sys-info endpoint; not added (avoid fake values).
-4. **File-renderer registration fix** — `BaseRenderer.get_supported_extensions()` (missing `self`) is a *backend* runtime defect, not fixed here. The UI surfaces renderer failure through the error state instead of a blank panel.
+
+## Additional alignment: removed fabricated telemetry
+
+- The layer pages (`CognitivePage`, `InferencePage`, `ExecutionPage`) previously pushed hard-coded demo events (`decision: 'Approve'`, `latencyMs: 42`, `orderStatus: 'filled'`) and hard-coded metrics ("Memory: Healthy", "Latency: Low"). These pages now read the real `runtimeStore.layerStatus` and show honest "Unavailable" when data is absent, with an empty state for the event lists.
+- `OverviewPage` previously ran its own `setInterval` fabricating `system.heartbeat` ticks; this was removed — heartbeats now come only from the real runtime connector.
+- The dashboard cards now use real design-token-based CSS classes (`.card-grid`, `.service-card`, `--section-heading`, `.activity-list`) instead of non-existent utility classes, so they render reliably without a Tailwind toolchain.
 
 ---
 
@@ -177,6 +183,5 @@ So the UI can render richer, honest data without inventing telemetry, the backen
 - `GET /api/trading/status` → backend, mode, execution_enabled, market provider, health
 - `GET /api/trading/positions`, `GET /api/trading/executions`
 - `GET /api/system/metrics` → CPU / RAM / model state
-- Fix `BaseRenderer.get_supported_extensions` missing `self` in the file renderers.
 
 Until these exist, the UI intentionally shows **"Unavailable"** (per the CRITICAL CONSTRAINT: never generate fake telemetry).

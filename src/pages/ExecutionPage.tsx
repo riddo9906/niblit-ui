@@ -1,36 +1,33 @@
-import { useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 import { useEventBus } from '../lib/eventBus';
+import { useRuntimeStore } from '../state/runtimeStore';
 
 export default function ExecutionPage() {
-  const { events, pushEvent } = useEventBus();
-
-  useEffect(() => {
-    pushEvent({
-      id: `execution-${Date.now()}`,
-      type: 'execution.updated',
-      source: 'execution',
-      timestamp: Date.now(),
-      payload: { orderStatus: 'filled', pnl: 1.32 },
-    });
-  }, [pushEvent]);
+  const { events } = useEventBus();
+  const { layerStatus } = useRuntimeStore();
 
   const recent = useMemo(() => events.filter((event) => event.source === 'execution' || event.type.includes('execution')), [events]);
+  const status = layerStatus.execution || 'Unavailable';
 
   return (
     <div className="grid">
       <section className="panel">
         <h2>Execution layer</h2>
-        <div className="metric"><span>Market feed</span><strong>Connected</strong></div>
+        <div className="metric"><span>Runtime</span><strong>{status}</strong></div>
         <div className="metric"><span>Order routing</span><strong>Governed</strong></div>
-        <div className="metric"><span>Latency</span><strong>Stable</strong></div>
+        <div className="metric"><span>Latency</span><strong>{status === 'Unavailable' ? 'Unavailable' : 'From runtime'}</strong></div>
       </section>
       <section className="panel">
-        <h3>Recent execution events</h3>
-        <ul className="list">
-          {recent.map((event) => (
-            <li key={event.id}>{event.type} • {String(event.payload.orderStatus ?? 'unknown')}</li>
-          ))}
-        </ul>
+        <h3>Execution activity</h3>
+        {recent.length === 0 ? (
+          <p className="chat-empty">No execution events yet. Events appear once the runtime streams them.</p>
+        ) : (
+          <ul className="list">
+            {recent.map((event) => (
+              <li key={event.id}>{event.type} • {new Date(event.timestamp).toLocaleTimeString()}</li>
+            ))}
+          </ul>
+        )}
       </section>
     </div>
   );
