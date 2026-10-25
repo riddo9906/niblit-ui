@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+﻿import { describe, it, expect } from 'vitest';
 import {
   normalizeCommands,
   normalizeCommand,
@@ -97,3 +97,4 @@ describe('command grouping', () => {
     expect(grouped[1].commands.map((c) => c.name)).toEqual(['recall', 'knowledge stats']);
   });
 });
+

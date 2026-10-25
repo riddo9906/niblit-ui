@@ -28,3 +28,32 @@ logs/
 # TypeScript
 *.tsbuildinfo
 tsconfig.*.tsbuildinfo
+
+# Local environment overrides and backups; keep publishable templates
+.env.*
+*.env
+*.env.*
+!.env.example
+!.env.*.example
+!*.env.example
+!*.env.template
+!*.env.sample
+
+# Test and tool caches
+coverage/
+.nyc_output/
+.vite/
+.vitest/
+playwright-report/
+test-results/
+
+# Local scratch files and OS metadata
+/_[!_]*
+*.tmp
+*.bak
+*.bak.*
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+Desktop.ini

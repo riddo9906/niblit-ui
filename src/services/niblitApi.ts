@@ -64,6 +64,14 @@ export async function streamInferenceChat(
   model: string,
   onToken: (token: string) => void,
   signal?: AbortSignal,
+  onModel?: (meta: {
+    requested_model?: string | null;
+    resolved_model?: string | null;
+    executed_model?: string | null;
+    fallback?: boolean | null;
+    fallback_reason?: string | null;
+    request_id?: string | null;
+  }) => void,
 ): Promise<void> {
   const response = await fetch(apiUrl('/v1/inference/chat'), {
     method: 'POST',
@@ -118,7 +126,18 @@ export async function streamInferenceChat(
       try {
         const parsed = JSON.parse(data) as {
           choices?: Array<{ delta?: { content?: string } }>;
+          niblit_model?: Record<string, unknown>;
         };
+        if (parsed.niblit_model && onModel) {
+          onModel({
+            requested_model: parsed.niblit_model.requested_model as string | null,
+            resolved_model: parsed.niblit_model.resolved_model as string | null,
+            executed_model: parsed.niblit_model.executed_model as string | null,
+            fallback: parsed.niblit_model.fallback as boolean | null,
+            fallback_reason: parsed.niblit_model.fallback_reason as string | null,
+            request_id: parsed.niblit_model.request_id as string | null,
+          });
+        }
         const token = parsed.choices?.[0]?.delta?.content;
         if (token) {
           onToken(token);

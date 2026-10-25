@@ -62,6 +62,14 @@ export default function ChatPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [models, setModels] = useState<string[]>([]);
   const [selectedModel, setSelectedModel] = useState('');
+  const [executedModel, setExecutedModel] = useState<string | null>(null);
+  const [executedMeta, setExecutedMeta] = useState<{
+    requested?: string | null;
+    resolved?: string | null;
+    fallback?: boolean | null;
+    fallbackReason?: string | null;
+    requestId?: string | null;
+  } | null>(null);
   const [chatMode, setChatMode] = useState<ChatMode>('runtime');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -124,7 +132,16 @@ export default function ChatPage() {
     await streamInferenceChat(history, selectedModel, (token) => {
       accumulated += token;
       updateAssistantText(assistantId, accumulated, true);
-    }, signal);
+    }, signal, (meta) => {
+      setExecutedModel(meta.executed_model ?? null);
+      setExecutedMeta({
+        requested: meta.requested_model ?? null,
+        resolved: meta.resolved_model ?? null,
+        fallback: meta.fallback ?? null,
+        fallbackReason: meta.fallback_reason ?? null,
+        requestId: meta.request_id ?? null,
+      });
+    });
     updateAssistantText(assistantId, accumulated || '[no response]', false);
   }
 
@@ -225,8 +242,17 @@ export default function ChatPage() {
         <div className="chat-header__identity">
           <span className="chat-header__title">Niblit</span>
           <span className="chat-header__mode">
-            {chatMode === 'inference' ? `Inference · ${selectedModel || 'no model'}` : 'Runtime · Core dispatch'}
+            {chatMode === 'inference'
+              ? `Inference · Selected ${selectedModel || 'no model'}`
+              : 'Runtime · Core dispatch'}
           </span>
+          {executedModel && (
+            <span className="chat-header__mode chat-header__mode--meta">
+              {executedModel === selectedModel
+                ? `Executed ${executedModel}`
+                : `Executed ${executedModel || '?'} (fallback${executedMeta?.fallbackReason ? `: ${executedMeta.fallbackReason}` : ''})`}
+            </span>
+          )}
         </div>
         <div className="chat-header__controls">
           {models.length > 0 && (
