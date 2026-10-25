@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useEventBus } from '../events/eventBus';
 import { startRuntimeConnector } from '../services/runtimeConnector';
+import { usePreferences } from '../lib/preferences';
 import type { LayerName, RuntimeEvent } from '../types/runtime';
 
 interface RuntimeStoreValue {
@@ -28,6 +29,7 @@ const RuntimeStoreContext = createContext<RuntimeStoreValue>({
 });
 
 export function RuntimeStoreProvider({ children }: { children: ReactNode }) {
+  const preferences = usePreferences();
   const { events, pushEvent } = useEventBus();
   const [activeLayer, setActiveLayer] = useState<LayerName>('cognitive');
   const [heartbeat, setHeartbeat] = useState(0);
@@ -38,6 +40,8 @@ export function RuntimeStoreProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
 
     void startRuntimeConnector({
+      refreshMs: preferences.refreshSeconds * 1000,
+      liveUpdates: preferences.liveUpdates,
       pushEvent,
       setActiveLayer,
       setLayerStatus: setLayerStatusState,
@@ -54,7 +58,7 @@ export function RuntimeStoreProvider({ children }: { children: ReactNode }) {
       cancelled = true;
       cleanup?.();
     };
-  }, [pushEvent]);
+  }, [pushEvent, preferences.refreshSeconds, preferences.liveUpdates]);
 
   const value = useMemo<RuntimeStoreValue>(() => ({
     activeLayer,

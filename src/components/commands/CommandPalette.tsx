@@ -6,7 +6,7 @@ import {
   filterCommands,
   groupCommands,
 } from '../../services/commandsApi';
-import { useCommandRunner, type HistoryEntry } from '../../pages/CommandsPage';
+import { type HistoryEntry } from '../../pages/CommandsPage';
 import { cn } from '../../lib/utils';
 
 /**
@@ -16,7 +16,6 @@ import { cn } from '../../lib/utils';
 export default function CommandPalette({
   open,
   onClose,
-  onResult,
 }: {
   open: boolean;
   onClose: () => void;
@@ -44,7 +43,6 @@ export default function CommandPalette({
 
   const filtered = useMemo(() => filterCommands(commands, query).slice(0, 40), [commands, query]);
   const grouped = useMemo(() => groupCommands(filtered), [filtered]);
-  const { execute } = useCommandRunner(commands, (entry) => onResult?.(entry));
 
   // Flatten for keyboard index math while preserving grouped display order.
   const flatList = useMemo(() => filtered, [filtered]);
@@ -60,12 +58,8 @@ export default function CommandPalette({
   }
 
   function runCommand(command: CommandInfo) {
-    void execute(command.requiresInput ? `${command.name} ` : command.name);
-    // Commands needing input land in the Commands workspace where the
-    // argument can be completed under governance.
-    if (command.requiresInput) {
-      navigate('/commands');
-    }
+    // Selection prepares a command; execution always stays in the governed UI.
+    navigate(`/commands?q=${encodeURIComponent(command.name)}`);
     onClose();
   }
 

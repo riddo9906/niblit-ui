@@ -1,4 +1,5 @@
 import { type FC, useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import FileViewer from '../components/renderers/FileViewer';
 import { listFiles, type FileInfo } from '../services/fileBrowser';
 
@@ -8,6 +9,7 @@ const FilesPage: FC = () => {
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [filter, setFilter] = useState('');
 
   const loadFiles = async (path: string) => {
     setLoading(true);
@@ -49,7 +51,7 @@ const FilesPage: FC = () => {
   };
 
   if (selectedFile) {
-    return <FileViewer filePath={selectedFile} onClose={() => setSelectedFile(null)} />;
+    return <div><div className="quick-links"><button onClick={() => setSelectedFile(null)}>Back to files</button><Link to={`/chat?prompt=${encodeURIComponent(`Read ${selectedFile} and explain its main functions and logic.`)}`}>Ask Niblit about this file</Link></div><FileViewer filePath={selectedFile} onClose={() => setSelectedFile(null)} /></div>;
   }
 
   return (
@@ -75,6 +77,8 @@ const FilesPage: FC = () => {
           <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontFamily: 'var(--mono)' }}>
             {currentPath}
           </span>
+          <button disabled={loading} onClick={() => void loadFiles(currentPath)}>Refresh</button>
+          <input aria-label="Filter files" placeholder="Filter files…" value={filter} onChange={e => setFilter(e.target.value)} />
         </div>
 
         {loading && <div style={{ color: 'var(--text-muted)' }}>Loading files...</div>}
@@ -97,9 +101,11 @@ const FilesPage: FC = () => {
                 </tr>
               </thead>
               <tbody>
-                {files.map((file) => (
+                {files.filter(file => file.path.toLowerCase().includes(filter.toLowerCase())).sort((a, b) => Number(b.is_dir) - Number(a.is_dir) || a.path.localeCompare(b.path)).map((file) => (
                   <tr
                     key={file.path}
+                    tabIndex={0}
+                    onKeyDown={event => { if (event.key === 'Enter') handleFileClick(file); }}
                     style={{
                       backgroundColor: file.is_dir ? 'var(--surface2)' : 'var(--surface)',
                       cursor: 'pointer',

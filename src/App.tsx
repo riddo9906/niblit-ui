@@ -13,6 +13,8 @@ const FilesPage = lazy(() => import('./pages/FilesPage'));
 const MemoryPage = lazy(() => import('./pages/MemoryPage'));
 const TradingPage = lazy(() => import('./pages/TradingPage'));
 const CommandsPage = lazy(() => import('./pages/CommandsPage'));
+const SettingsPage = lazy(() => import('./pages/SettingsPage'));
+const ArchitecturePage = lazy(() => import('./pages/ArchitecturePage'));
 
 function App() {
   return (
@@ -30,6 +32,8 @@ function App() {
               <Route path="/memory" element={<MemoryPage />} />
               <Route path="/trading" element={<TradingPage />} />
               <Route path="/commands" element={<CommandsPage />} />
+              <Route path="/settings" element={<SettingsPage />} />
+              <Route path="/architecture" element={<ArchitecturePage />} />
             </Routes>
           </Suspense>
         </AppShell>

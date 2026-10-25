@@ -1,7 +1,7 @@
 const trimSlash = (value: string) => value.replace(/\/+$/, '');
 
 export const API_BASE_URL = trimSlash(
-  import.meta.env.VITE_NIBLIT_API_URL || 'http://127.0.0.1:5000',
+  readPreferences().coreUrl,
 );
 
 /** CLOUD_BASE_URL is always a SERVER ROOT (no /v1 suffix). An OpenAI-style
@@ -30,3 +30,4 @@ export function cloudUrl(path: string): string {
   const normalized = path.startsWith('/') ? path : `/${path}`;
   return `${CLOUD_BASE_URL}${normalized}`;
 }
+import { readPreferences } from '../lib/preferences';

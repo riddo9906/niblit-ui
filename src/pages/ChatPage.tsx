@@ -1,8 +1,12 @@
 import { FormEvent, useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { apiUrl } from '../config/api';
+import { usePreferences } from '../lib/preferences';
 import {
   CloudChatMessage,
   fetchInferenceModels,
   sendChat,
+  responseText,
   streamInferenceChat,
 } from '../services/niblitApi';
 import { useRuntimeStore } from '../state/runtimeStore';
@@ -57,6 +61,8 @@ function deriveActivity(
 }
 
 export default function ChatPage() {
+  const preferences = usePreferences();
+  const [searchParams] = useSearchParams();
   const { events, layerStatus } = useRuntimeStore();
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -78,14 +84,24 @@ export default function ChatPage() {
   const logRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  useEffect(() => { if (searchParams.get('prompt')) setInput(searchParams.get('prompt') || ''); if (searchParams.get('mode') === 'inference') setChatMode('inference'); }, [searchParams]);
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetch(apiUrl('/api/desktop/conversation'), { signal: controller.signal }).then(response => response.ok ? response.json() : null).then(payload => {
+      if (!controller.signal.aborted && Array.isArray(payload?.messages)) {
+        const restored: ChatMessage[] = payload.messages.filter((m: CloudChatMessage) => ['user', 'assistant'].includes(m.role)).map((m: CloudChatMessage, index: number) => ({ id: `restored-${index}`, role: m.role, text: responseText(m.content), ts: 'Earlier' }));
+        setMessages(current => current.length ? current : restored);
+      }
+    }).catch(() => undefined);
+    return () => controller.abort();
+  }, []);
 
   useEffect(() => {
     void fetchInferenceModels().then((items) => {
       const ids = items.map((item) => item.id).filter(Boolean);
       setModels(ids);
       if (ids.length > 0) {
-        setSelectedModel(ids[0]);
-        setChatMode('inference');
+        setSelectedModel(ids.includes(preferences.defaultModel) ? preferences.defaultModel : ids[0]);
       } else {
         setChatMode('runtime');
       }
@@ -109,7 +125,8 @@ export default function ChatPage() {
   }
 
   async function runRuntimeChat(text: string, assistantId: string, signal: AbortSignal) {
-    const response = await sendChat(text, signal);
+    const context = attachments.map(file => `--- attached: ${file.name} ---\n${file.content}`).join('\n\n');
+    const response = await sendChat(context ? `${text}\n\n${context}` : text, signal);
     if (response.error) {
       setError(response.error);
     }
@@ -255,13 +272,17 @@ export default function ChatPage() {
           )}
         </div>
         <div className="chat-header__controls">
+          <select className="chat-header__select" aria-label="Conversation mode" value={chatMode}
+            disabled={busy} onChange={event => setChatMode(event.target.value as ChatMode)}>
+            <option value="runtime">Niblit assistant</option>
+            <option value="inference" disabled={!models.length}>Model chat</option>
+          </select>
           {models.length > 0 && (
             <select
               className="chat-header__select"
               value={selectedModel}
               onChange={(event) => {
                 setSelectedModel(event.target.value);
-                setChatMode('inference');
               }}
               aria-label="Inference model"
             >
@@ -271,6 +292,9 @@ export default function ChatPage() {
             </select>
           )}
           <StatusDot kind={coreKind} label={layerStatus.cognitive} />
+          <button type="button" className="chat-tool-btn" disabled={busy || !messages.length}
+            title="Clear this view; stored conversation and knowledge remain available."
+            onClick={() => { setMessages([]); setError(''); }}>Clear view</button>
         </div>
       </header>
 
@@ -362,7 +386,7 @@ export default function ChatPage() {
           value={input}
           onChange={(event) => setInput(event.target.value)}
           onKeyDown={(event) => {
-            if (event.key === 'Enter' && !event.shiftKey) {
+            if (preferences.sendOnEnter && event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
               event.preventDefault();
               void onSubmit(event);
             }

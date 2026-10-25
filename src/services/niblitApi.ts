@@ -1,8 +1,22 @@
 import { API_BASE_URL, apiUrl } from '../config/api';
+import { readPreferences } from '../lib/preferences';
 
 export interface ChatResponse {
   reply: string;
   error?: string;
+}
+
+export function responseText(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    for (const key of ['message', 'reply', 'text', 'content', 'summary']) {
+      if (typeof record[key] === 'string') return record[key] as string;
+    }
+    return JSON.stringify(value);
+  }
+  return String(value);
 }
 
 export interface CloudChatMessage {
@@ -26,7 +40,9 @@ export interface ModelInfo {
 export async function fetchHealth(): Promise<boolean> {
   try {
     const response = await fetch(apiUrl('/health'), { method: 'GET' });
-    return response.ok;
+    if (!response.ok) return false;
+    const body = await response.json();
+    return body.service === 'niblit';
   } catch {
     return false;
   }
@@ -53,9 +69,9 @@ export async function sendChat(text: string, signal?: AbortSignal): Promise<Chat
   });
   const payload = (await response.json()) as ChatResponse & { error?: string };
   if (!response.ok) {
-    return { reply: '', error: payload.error || `HTTP ${response.status}` };
+    return { reply: '', error: responseText(payload.error) || `HTTP ${response.status}` };
   }
-  return { reply: String(payload.reply ?? '') };
+  return { reply: responseText(payload.reply) };
 }
 
 /** Stream tokens from cloud-server ``POST /v1/chat/completions`` (SSE). */
@@ -80,6 +96,8 @@ export async function streamInferenceChat(
       model,
       messages,
       stream: true,
+      temperature: readPreferences().temperature,
+      max_tokens: readPreferences().maxTokens,
     }),
     signal,
   });

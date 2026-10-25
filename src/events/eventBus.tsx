@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
 import type { RuntimeEvent } from '../types/runtime';
+import { usePreferences } from '../lib/preferences';
 
 const EventBusContext = createContext<{
   events: RuntimeEvent[];
@@ -10,11 +11,12 @@ const EventBusContext = createContext<{
 });
 
 export function EventBusProvider({ children }: { children: ReactNode }) {
+  const preferences = usePreferences();
   const [events, setEvents] = useState<RuntimeEvent[]>([]);
 
   const pushEvent = useCallback((event: RuntimeEvent) => {
-    setEvents((current) => [event, ...current].slice(0, 80));
-  }, []);
+    setEvents((current) => [event, ...current].slice(0, preferences.eventLimit));
+  }, [preferences.eventLimit]);
 
   const value = useMemo(() => ({ events, pushEvent }), [events, pushEvent]);
 

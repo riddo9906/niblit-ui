@@ -6,6 +6,8 @@ import type { LayerName } from '../types/runtime';
 import { StatusDot, statusKind } from './ui/StatusDot';
 import { EmptyState } from './ui/States';
 import CommandPalette from './commands/CommandPalette';
+import SubsystemPanel from './SubsystemPanel';
+import { usePreferences } from '../lib/preferences';
 
 /** Small inline monochrome markers (currentColor tinted). No external icon dep. */
 function NavIcon({ icon }: { icon: string }) {
@@ -46,6 +48,8 @@ const navGroups: Array<{ id: string; label: string; items: NavItem[] }> = [
       { to: '/', label: 'Overview', sub: 'Runtime home', icon: 'overview', end: true },
       { to: '/memory', label: 'Memory', sub: 'Vector store', icon: 'memory' },
       { to: '/files', label: 'Files', sub: 'Niblit workspace', icon: 'folder' },
+      { to: '/architecture', label: 'Architecture', sub: 'Repositories & layers', icon: 'brain' },
+      { to: '/settings', label: 'Settings', sub: 'Connection & preferences', icon: 'cmd' },
     ],
   },
   {
@@ -79,7 +83,7 @@ function HeaderBar({ layerStatus }: { layerStatus: Record<LayerName, string> }) 
         <span className="niblit-tagline">Local Autonomous Intelligence Runtime</span>
       </div>
       <div className="header-bar__right">
-        <StatusDot status={layerStatus.cognitive} label={ok ? 'SYSTEM OPERATIONAL' : undefined} pulse={ok} />
+        <StatusDot status={layerStatus.cognitive} label={ok ? 'CORE CONNECTED' : undefined} pulse={ok} />
         <span className="header-meta">v0.1.0</span>
       </div>
     </header>
@@ -177,9 +181,9 @@ function RightPanel({ layerStatus, events }: { layerStatus: Record<LayerName, st
             )}
           </ul>
         )}
-        {tab === 'memory' && <EmptyState title="Memory backend not connected" kind="unavailable" />}
-        {tab === 'tasks' && <EmptyState title="No active tasks" hint="Background work will appear here" kind="idle" />}
-        {tab === 'models' && <EmptyState title="No model loaded" hint="Load a provider in Settings" kind="idle" />}
+        {tab === 'memory' && <SubsystemPanel section="memory" title="Memory" compact />}
+        {tab === 'tasks' && <SubsystemPanel section="execution" title="Tasks and services" compact />}
+        {tab === 'models' && <SubsystemPanel section="inference" title="Model inventory" compact />}
       </div>
     </aside>
   );
@@ -210,7 +214,7 @@ function StatusBar({
         ))}
       </div>
       <div className="status-bar__right">
-        <span className="observe-badge">OBSERVE</span>
+        <NavLink to="/trading" className="observe-badge">TRADING STATUS</NavLink>
         <button
           type="button"
           className="context-toggle"
@@ -226,6 +230,14 @@ function StatusBar({
 }
 
 export default function AppShell({ children }: { children: ReactNode }) {
+  const preferences = usePreferences();
+  useEffect(() => {
+    const root = document.documentElement;
+    root.dataset.theme = preferences.theme;
+    root.dataset.density = preferences.density;
+    root.dataset.reducedMotion = String(preferences.reduceMotion);
+    root.style.zoom = String(preferences.textScale / 100);
+  }, [preferences.theme, preferences.density, preferences.reduceMotion, preferences.textScale]);
   const [contextOpen, setContextOpen] = useState(true);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const { layerStatus, activeLayer, events } = useRuntimeStore();

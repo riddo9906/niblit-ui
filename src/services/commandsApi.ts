@@ -2,6 +2,7 @@ import { API_BASE_URL, apiUrl } from '../config/api';
 
 /** Raw shapes returned by the Core API ``GET /api/commands`` (app.py COMMAND_GROUPS). */
 export interface RawCommand {
+  aliases?: string[];
   label: string;
   cmd: string;
   desc?: string;
@@ -48,9 +49,7 @@ function argumentHintOf(label: string): string | undefined {
 /** Translate one raw catalogue entry into the normalized UI contract. */
 export function normalizeCommand(raw: RawCommand, group: string): CommandInfo {
   const name = String(raw.cmd ?? raw.label ?? '').trim();
-  const aliases = name
-    .split(/\s+/)
-    .filter((part) => part.length > 1);
+  const aliases = (raw.aliases || []).filter(value => typeof value === 'string');
   return {
     name,
     label: String(raw.label ?? name),
@@ -103,6 +102,7 @@ export function filterCommands(commands: CommandInfo[], query: string): CommandI
     const haystackLabel = command.label.toLowerCase();
     const haystackDesc = command.description.toLowerCase();
     const haystackCategory = command.category.toLowerCase();
+    const haystackAliases = command.aliases.join(' ').toLowerCase();
     let score = 0;
     let matchedAll = true;
     for (const term of terms) {
@@ -114,6 +114,8 @@ export function filterCommands(commands: CommandInfo[], query: string): CommandI
         score += 15;
       } else if (haystackCategory.includes(term)) {
         score += 8;
+      } else if (haystackAliases.includes(term)) {
+        score += 12;
       } else if (haystackDesc.includes(term)) {
         score += 5;
       } else {
@@ -165,9 +167,15 @@ export type CommandState =
 export interface JsonSchemaProperty {
   type: string;
   description?: string;
+  default?: unknown;
+  enum?: unknown[];
+  minimum?: number;
+  maximum?: number;
 }
 
 export interface GovernedCommand {
+  execution_channel?: 'operator';
+  confirmation_required?: boolean;
   name: string;
   description: string;
   category: string;
@@ -207,9 +215,10 @@ export interface GovernedCommand {
 }
 
 export interface GovernedRegistryResponse {
+  operator_available?: boolean;
   source: string;
   capability_path: string;
-  research_budgets: {
+  research_budgets?: {
     max_searches: number;
     max_fetches: number;
     max_rounds: number;
@@ -255,6 +264,27 @@ export async function fetchGovernedCommands(): Promise<GovernedRegistryResponse 
   } catch {
     return null;
   }
+}
+
+/** Operator handlers stay outside the assistant's tool registry. */
+export async function fetchDesktopCommands(): Promise<GovernedRegistryResponse | null> {
+  const [governed, response] = await Promise.all([
+    fetchGovernedCommands(), fetch(apiUrl('/api/commands/operator')).catch(() => null),
+  ]);
+  const operator = response?.ok ? await response.json() as {commands: GovernedCommand[]} : null;
+  if (!governed && !operator) return null;
+  const known = new Set((governed?.commands || []).map(c => c.original_name || c.name));
+  const commands = [...(governed?.commands || []), ...(operator?.commands || []).filter(c => !known.has(c.name))];
+  return {source:'original_operator_handlers',capability_path:'Core command handlers',...governed,
+    commands,count:commands.length,operator_available:!!operator};
+}
+
+export async function executeOperatorCommand(name: string,args: Record<string,unknown>): Promise<CommandExecutionResult> {
+  const response=await fetch(apiUrl('/api/commands/operator/execute'),{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({command:name,arguments:args,confirmed:true})});
+  const result=await response.json();
+  if(!response.ok) throw new Error(result.error || result.detail || `Core returned HTTP ${response.status}`);
+  return result as CommandExecutionResult;
 }
 
 // ── Phase 5G: the complete ORIGINAL command surface (read-only audit) ───────
@@ -344,7 +374,7 @@ export async function executeGovernedCommand(
 export function initialArgumentValues(command: GovernedCommand): Record<string, string> {
   const values: Record<string, string> = {};
   for (const [key, prop] of Object.entries(command.input_schema.properties ?? {})) {
-    values[key] = prop.type === 'integer' || prop.type === 'number' ? '' : '';
+    values[key] = prop.default === undefined ? '' : typeof prop.default === 'object' ? JSON.stringify(prop.default) : String(prop.default);
   }
   return values;
 }
@@ -366,10 +396,25 @@ export function parseArgumentValues(
       if (!Number.isFinite(parsed)) {
         throw new Error(`Argument "${key}" must be a number`);
       }
-      payload[key] = prop.type === 'integer' ? Math.trunc(parsed) : parsed;
+      if (prop.type === 'integer' && !Number.isInteger(parsed)) throw new Error(`Argument "${key}" must be a whole number`);
+      if (prop.minimum !== undefined && parsed < prop.minimum) throw new Error(`Argument "${key}" must be at least ${prop.minimum}`);
+      if (prop.maximum !== undefined && parsed > prop.maximum) throw new Error(`Argument "${key}" must be at most ${prop.maximum}`);
+      payload[key] = parsed;
+    } else if (prop?.type === 'boolean') {
+      if (!['true', 'false'].includes(trimmed)) throw new Error(`Argument "${key}" must be true or false`);
+      payload[key] = trimmed === 'true';
+    } else if (prop?.type === 'array' || prop?.type === 'object') {
+      let parsed: unknown;
+      try { parsed = JSON.parse(trimmed); } catch { throw new Error(`Argument "${key}" must contain valid JSON`); }
+      if (prop.type === 'array' ? !Array.isArray(parsed) : !parsed || Array.isArray(parsed) || typeof parsed !== 'object') throw new Error(`Argument "${key}" must be a JSON ${prop.type}`);
+      payload[key] = parsed;
     } else {
       payload[key] = trimmed;
     }
+    if (prop?.enum && !prop.enum.includes(payload[key])) throw new Error(`Argument "${key}" must match one of the available choices`);
+  }
+  for (const key of command.input_schema.required || []) {
+    if (!(key in payload)) throw new Error(`Argument "${key}" is required`);
   }
   return payload;
 }

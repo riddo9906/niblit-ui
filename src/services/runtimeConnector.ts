@@ -1,15 +1,16 @@
 import type { Dispatch, SetStateAction } from 'react';
 import { USE_DEMO_CONNECTOR } from '../config/api';
+import { apiUrl } from '../config/api';
 import { createRuntimeEvent } from '../events/eventBus';
 import type { LayerName } from '../types/runtime';
 import {
-  fetchCloudRuntimeStatus,
   fetchHealth,
-  fetchRuntimeStatus,
   openRuntimeWebSocket,
 } from './niblitApi';
 
 interface ConnectorOptions {
+  refreshMs?: number;
+  liveUpdates?: boolean;
   pushEvent: (event: ReturnType<typeof createRuntimeEvent>) => void;
   setActiveLayer: Dispatch<SetStateAction<LayerName>>;
   setLayerStatus: Dispatch<SetStateAction<Record<LayerName, string>>>;
@@ -56,43 +57,34 @@ export function startDemoRuntimeConnector({
   return () => window.clearInterval(intervalId);
 }
 
-function mapStatusToLayers(status: Record<string, unknown> | null): Partial<Record<LayerName, string>> {
-  if (!status) {
-    return {};
-  }
-  const mode = String(status.runtime_mode ?? status.status ?? 'unknown');
-  const provider = String(status.active_provider ?? 'n/a');
-  return {
-    cognitive: mode === 'degraded' ? 'Degraded' : 'Healthy',
-    inference: provider !== 'n/a' ? `Provider: ${provider}` : 'Bridge idle',
-    execution: typeof status.threads === 'number' ? `${status.threads} threads` : 'Connected',
-  };
-}
-
 export function startApiRuntimeConnector(options: ConnectorOptions): () => void {
   const cleanups: Array<() => void> = [];
   let heartbeat = 0;
+  let disposed = false;
+  let polling = false;
+  let controller = new AbortController();
 
   const pollStatus = async () => {
-    const [runtimeStatus, cloudStatus] = await Promise.all([
-      fetchRuntimeStatus(),
-      fetchCloudRuntimeStatus(),
-    ]);
+    if (disposed || polling) return;
+    polling = true;
+    controller = new AbortController();
+    let snapshot: Record<string, any> | null = null;
+    const timeout = window.setTimeout(() => controller.abort(), 8000);
+    try {
+      const response = await fetch(apiUrl('/api/desktop/overview'), { signal: controller.signal });
+      if (response.ok) snapshot = await response.json();
+    } catch { /* show disconnected state; never substitute simulated health */ }
+    finally { window.clearTimeout(timeout); polling = false; }
+    if (disposed) return;
 
     heartbeat += 1;
     options.setHeartbeat(heartbeat);
 
-    const layerPatch = mapStatusToLayers(runtimeStatus);
-    if (Object.keys(layerPatch).length > 0) {
-      options.setLayerStatus((current) => ({ ...current, ...layerPatch }));
-    }
-
-    if (cloudStatus) {
-      options.setLayerStatus((current) => ({
-        ...current,
-        inference: String(cloudStatus.mode ?? current.inference),
-      }));
-    }
+    options.setLayerStatus({
+      cognitive: snapshot?.core_available ? String(snapshot.core?.status || 'Unknown') : 'Unavailable',
+      inference: snapshot?.cloud?.available ? String(snapshot.cloud.data?.status || 'Connected') : 'Unavailable',
+      execution: snapshot?.trading?.available ? String(snapshot.trading.data?.state || 'Unknown') : 'Unavailable',
+    });
 
     options.pushEvent(
       createRuntimeEvent({
@@ -100,8 +92,7 @@ export function startApiRuntimeConnector(options: ConnectorOptions): () => void 
         source: 'system',
         payload: {
           heartbeat,
-          runtime: runtimeStatus,
-          cloud: cloudStatus,
+          snapshot,
         },
       }),
     );
@@ -109,11 +100,12 @@ export function startApiRuntimeConnector(options: ConnectorOptions): () => void 
 
   const pollId = window.setInterval(() => {
     void pollStatus();
-  }, 3000);
+  }, options.refreshMs ?? 10000);
   cleanups.push(() => window.clearInterval(pollId));
+  if (options.liveUpdates === false) window.clearInterval(pollId);
   void pollStatus();
 
-  const closeSocket = openRuntimeWebSocket(
+  const closeSocket = options.liveUpdates === false ? () => undefined : openRuntimeWebSocket(
     (frame) => {
       const events = Array.isArray(frame.events) ? frame.events : [];
       for (const item of events) {
@@ -147,6 +139,8 @@ export function startApiRuntimeConnector(options: ConnectorOptions): () => void 
   cleanups.push(closeSocket);
 
   return () => {
+    disposed = true;
+    controller.abort();
     for (const cleanup of cleanups) {
       cleanup();
     }
@@ -165,11 +159,11 @@ export async function startRuntimeConnector(options: ConnectorOptions): Promise<
         type: 'runtime.warning',
         source: 'system',
         payload: {
-          message: 'Niblit API unreachable — running demo connector. Set VITE_NIBLIT_API_URL.',
+          message: 'Core is not connected. Check the Core address in Settings and use Test connection.',
         },
       }),
     );
-    return startDemoRuntimeConnector(options);
+    return startApiRuntimeConnector(options);
   }
 
   options.pushEvent(

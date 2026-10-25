@@ -1,5 +1,6 @@
 import { API_BASE_URL } from '../config/api';
 import type { FileMetadata as FileMetadataType, RenderResult } from '../types/renderers';
+import { resolveWorkspaceFile } from './fileBrowser';
 
 export interface FileMetadata extends FileMetadataType {}
 
@@ -10,6 +11,7 @@ export async function getSupportedTypes(): Promise<Record<string, string[]>> {
 }
 
 export async function renderFile<T = unknown>(path: string): Promise<RenderResult<T>> {
+  path = await resolveWorkspaceFile(path);
   const response = await fetch(`${API_BASE_URL}/api/file/render`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -19,6 +21,7 @@ export async function renderFile<T = unknown>(path: string): Promise<RenderResul
 }
 
 export async function getFilePreview(path: string): Promise<{ metadata?: FileMetadata; error?: string }> {
+  path = await resolveWorkspaceFile(path);
   const response = await fetch(`${API_BASE_URL}/api/file/preview`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

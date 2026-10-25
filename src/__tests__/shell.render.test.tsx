@@ -42,7 +42,7 @@ describe('AppShell render (AIOS frame)', () => {
     expect(html).toContain('Core');
     expect(html).toContain('Cloud');
     expect(html).toContain('Execution');
-    expect(html).toContain('OBSERVE');
+    expect(html).toContain('TRADING STATUS');
 
     // Default seed state is 'Connecting…' → read-only banner is shown
     expect(html).toContain('read-only');

@@ -1,4 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import CommandCatalogue from '../components/commands/CommandCatalogue';
+import { usePreferences } from '../lib/preferences';
 import {
   type CommandInfo,
   type CommandExecutionResult,
@@ -6,15 +9,16 @@ import {
   type CommandSurfaceResponse,
   type GovernedCommand,
   type GovernedRegistryResponse,
+  type AuditedCommand,
   filterCommands,
   fetchCommandSurface,
-  fetchGovernedCommands,
+  fetchDesktopCommands,
+  executeOperatorCommand,
   executeGovernedCommand,
   initialArgumentValues,
   parseArgumentValues,
   stateLabel,
 } from '../services/commandsApi';
-import { sendChat } from '../services/niblitApi';
 import { SectionHeader, EmptyState } from '../components/ui/States';
 
 export interface HistoryEntry {
@@ -77,7 +81,8 @@ export function useCommandRunner(
   async function execute(text: string): Promise<void> {
     const trimmed = text.trim();
     if (!trimmed || pendingCommand !== null) return;
-    const known = commands.find((c) => trimmed.toLowerCase().startsWith(c.name.toLowerCase()));
+    const known = [...commands].sort((a,b)=>b.name.length-a.name.length).find((c) => trimmed.toLowerCase() === c.name.toLowerCase()
+      || trimmed.toLowerCase().startsWith(`${c.name.toLowerCase()} `));
     if (!known && commands.length > 0) {
       const suggestions = filterCommands(commands, trimmed).slice(0, 3).map((c) => c.name);
       onResult({
@@ -94,12 +99,14 @@ export function useCommandRunner(
     }
     setPendingCommand(trimmed);
     try {
-      const response = await sendChat(trimmed);
+      if (!known) throw new Error('Select a known command before execution.');
+      const response = await executeOperatorCommand(known.name,{text:trimmed.slice(known.name.length).trim()});
       onResult({
         id: `${Date.now()}`,
         command: trimmed,
-        output: response.reply,
-        error: response.error,
+        output: typeof response.result === 'string' ? response.result : JSON.stringify(response.result,null,2),
+        error: response.error || undefined,
+        status: response.status,
         at: Date.now(),
       });
     } catch {
@@ -171,7 +178,7 @@ export function GovernedDetail({
   return (
     <aside className="cmd-detail">
       <div className="cmd-detail__name">
-        <code>{command.name}</code>
+        <code>{command.original_name || command.name}</code>
         <GovernedBadge state={command.state} />
       </div>
       <p className="cmd-detail__desc">
@@ -211,7 +218,7 @@ export function GovernedDetail({
         <div className="cmd-meta__row">
           <dt>LLM access</dt>
           <dd>
-            {command.execution_enabled
+            {command.execution_channel === 'operator' ? 'Desktop operator only; not exposed to the assistant' : command.execution_enabled
               ? 'Available on the governed assistant tool loop'
               : 'Not exposed to the assistant (operator/runtime only)'}
           </dd>
@@ -258,14 +265,17 @@ export function GovernedDetail({
                 <code>{key}</code>
                 {required.has(key) && <span className="cmd-meta__req">Required</span>}
               </span>
-              <input
+              {prop.enum || prop.type === 'boolean' ? <select aria-label={`Argument ${key}`} className="cmd-arg__input" value={argValues[key] ?? ''} onChange={event => onArgChange(key, event.target.value)}><option value="">Select a value</option>{(prop.enum || [true, false]).map(value => <option key={String(value)} value={String(value)}>{String(value)}</option>)}</select> : prop.type === 'array' || prop.type === 'object' ? <textarea aria-label={`Argument ${key}`} className="cmd-arg__input" value={argValues[key] ?? ''} onChange={event => onArgChange(key, event.target.value)} placeholder={prop.type === 'array' ? '["value"]' : '{"key": "value"}'} /> : <input
                 className="cmd-arg__input"
                 type={prop.type === 'integer' || prop.type === 'number' ? 'number' : 'text'}
+                step={prop.type === 'integer' ? 1 : 'any'}
+                min={prop.minimum}
+                max={prop.maximum}
                 value={argValues[key] ?? ''}
                 onChange={(event) => onArgChange(key, event.target.value)}
                 placeholder={prop.description ?? ''}
                 aria-label={`Argument ${key}`}
-              />
+              />}
             </label>
           ))}
         </div>
@@ -302,7 +312,9 @@ export function GovernedDetail({
             <div className="cmd-result__error">{lastResult.error}</div>
           )}
           {lastResult.result !== null && lastResult.result !== undefined && (
-            <pre className="cmd-result__json">{JSON.stringify(lastResult.result, null, 2)}</pre>
+            <pre className="cmd-result__json">{typeof lastResult.result === 'string' ? lastResult.result
+              : lastResult.result && typeof lastResult.result === 'object' && 'summary' in lastResult.result && typeof lastResult.result.summary === 'string'
+                ? lastResult.result.summary : JSON.stringify(lastResult.result, null, 2)}</pre>
           )}
           {lastResult.governance && (
             <div className="cmd-result__gov">
@@ -323,7 +335,9 @@ export function filterGoverned(commands: GovernedCommand[], query: string): Gove
     (c) =>
       c.name.toLowerCase().includes(q) ||
       c.category.toLowerCase().includes(q) ||
-      c.description.toLowerCase().includes(q),
+      c.description.toLowerCase().includes(q) ||
+      (c.original_name || '').toLowerCase().includes(q) ||
+      (c.aliases || []).some(alias => alias.toLowerCase().includes(q)),
   );
 }
 
@@ -349,6 +363,12 @@ const historyGlyph: Record<string, string> = {
 };
 
 export default function CommandsPage() {
+  const preferences = usePreferences();
+  const [searchParams] = useSearchParams();
+  const [view, setView] = useState<'actions' | 'catalogue'>('actions');
+  const [reloadCounter, setReloadCounter] = useState(0);
+  const [stateFilter, setStateFilter] = useState('');
+  const [confirmRequested, setConfirmRequested] = useState(false);
   const [registry, setRegistry] = useState<GovernedRegistryResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
@@ -362,7 +382,9 @@ export default function CommandsPage() {
 
   useEffect(() => {
     let cancelled = false;
-    void fetchGovernedCommands().then((payload) => {
+    setLoading(true);
+    setLoadError('');
+    void fetchDesktopCommands().then((payload) => {
       if (cancelled) return;
       if (!payload || payload.commands.length === 0) {
         setLoadError('Core governed command registry is unavailable.');
@@ -373,7 +395,7 @@ export default function CommandsPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [reloadCounter]);
 
   // Phase 5G: the read-only ORIGINAL surface audit. It is advisory: when the
   // core does not expose it, the governed registry alone still renders.
@@ -385,10 +407,30 @@ export default function CommandsPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [reloadCounter]);
+
+  useEffect(() => {
+    const requested = searchParams.get('q');
+    if (!requested) return;
+    setQuery(requested);
+    const command = registry?.commands.find(c => c.name === requested || c.original_name === requested || c.aliases?.includes(requested));
+    if (command) { setSelected(command); setView('actions'); }
+    else if (registry) setView('catalogue');
+  }, [searchParams, registry]);
 
   const commands = registry?.commands ?? [];
-  const filtered = useMemo(() => filterGoverned(commands, query), [commands, query]);
+  const catalogue = useMemo(() => {
+    const original=surface?.commands || [];
+    const seen=new Set(original.map(c=>c.original_name));
+    const added: AuditedCommand[]=commands.filter(c=>c.execution_channel==='operator'&&!seen.has(c.name)).map(c=>({
+      original_name:c.name,canonical_id:c.name,category:c.category,description:c.description,aliases:c.aliases,
+      risk_class:c.risk_class,side_effect_level:c.side_effect_level,llm_safe:false,governed_status:'OPERATOR_ONLY',
+      classification_reason:'Original source handler; desktop operator access is separate from assistant tools.',
+      implementation_exists:c.state!=='UNAVAILABLE',source:c.original_source,unavailable_reason:c.unavailable_reason,
+    }));
+    return [...original,...added];
+  },[surface,commands]);
+  const filtered = useMemo(() => filterGoverned(commands, query).filter(c => !stateFilter || c.state === stateFilter), [commands, query, stateFilter]);
   const grouped = useMemo(() => groupGoverned(filtered), [filtered]);
   const budgets = registry?.research_budgets;
   const selectedArgs = selected
@@ -396,6 +438,7 @@ export default function CommandsPage() {
     : {};
 
   function select(command: GovernedCommand) {
+    setConfirmRequested(false);
     setSelected(command);
     setArgValues((current) => ({
       ...current,
@@ -403,12 +446,19 @@ export default function CommandsPage() {
     }));
   }
 
-  async function runSelected(): Promise<void> {
+  async function runSelected(confirmed = false): Promise<void> {
     if (!selected || executingName !== null) return;
+    if (!confirmed && preferences.confirmActions && !['read_only', 'none', 'NONE'].includes(selected.side_effect_level)) {
+      setConfirmRequested(true);
+      return;
+    }
+    setConfirmRequested(false);
     setExecutingName(selected.name);
     try {
       const args = parseArgumentValues(selected, selectedArgs);
-      const outcome = await executeGovernedCommand(selected.name, args);
+      const outcome = selected.execution_channel === 'operator'
+        ? await executeOperatorCommand(selected.name,args)
+        : await executeGovernedCommand(selected.name, args);
       setResults((current) => ({ ...current, [selected.name]: outcome }));
       setHistory((current) => [outcome, ...current].slice(0, 12));
     } catch (error) {
@@ -430,17 +480,23 @@ export default function CommandsPage() {
     <div className="commands-page">
       <SectionHeader
         title="Commands"
-        meta={loading ? undefined : `${commands.length} governed capabilities`}
+        meta={loading ? undefined : `${commands.length} original and assistant commands`}
       />
-      <div className="commands-layout">
+      <div className="toolbar-actions"><button aria-pressed={view === 'actions'} onClick={() => setView('actions')}>Run commands ({commands.length})</button><button aria-pressed={view === 'catalogue'} onClick={() => setView('catalogue')}>All commands ({catalogue.length})</button><button disabled={loading} onClick={() => setReloadCounter(value => value + 1)}>Refresh registry</button></div>
+      {registry?.operator_available===false&&<p role="alert">This backend does not expose original operator commands. Restart the updated Core build.</p>}
+      {confirmRequested && selected && <div className="panel" role="alertdialog" aria-label="Confirm command"><h3>Run {selected.name}?</h3><p>{selected.side_effect_detail || `This action has ${selected.side_effect_level} side effects.`} Backend authorization still applies.</p><button onClick={() => void runSelected(true)}>Confirm action</button><button onClick={() => setConfirmRequested(false)}>Cancel</button></div>}
+      {view === 'catalogue' && <><input className="cmd-search" aria-label="Search complete command catalogue" value={query} onChange={e => setQuery(e.target.value)} placeholder="Search every command and alias…" />
+        {catalogue.length ? <CommandCatalogue commands={catalogue} query={query} canPrepare={entry=>commands.some(c=>c.name===entry.governed_tool||c.name===entry.original_name||c.aliases?.includes(entry.original_name))} onPrepare={entry => { const command = commands.find(c => c.name === entry.governed_tool || c.name === entry.original_name || c.aliases?.includes(entry.original_name)); if (command) { select(command); setView('actions'); setQuery(''); } }} /> : <EmptyState title="Complete catalogue unavailable" hint="Refresh after Core finishes starting." />}</>}
+      <div className="commands-layout" style={{ display: view === 'catalogue' ? 'none' : undefined }}>
         <div className="commands-master">
           <input
             className="cmd-search"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search governed commands…"
+            placeholder="Search original commands, aliases and actions…"
             aria-label="Search commands"
           />
+          <select aria-label="Filter command availability" value={stateFilter} onChange={e => setStateFilter(e.target.value)}><option value="">All availability states</option>{[...new Set(commands.map(c => c.state))].sort().map(state => <option key={state} value={state}>{stateLabel(state)}</option>)}</select>
           {loading ? (
             <EmptyState kind="loading" icon="◌" title="Retrieving governed registry…" />
           ) : loadError ? (
@@ -462,7 +518,7 @@ export default function CommandsPage() {
                     }
                     onClick={() => select(command)}
                   >
-                    <code className="cmd-row__name">{command.name}</code>
+                    <code className="cmd-row__name">{command.original_name || command.name}</code>
                     <GovernedBadge state={command.state} />
                   </button>
                 ))}
@@ -523,7 +579,7 @@ export default function CommandsPage() {
 
           {budgets && (
             <p className="cmd-budgets">
-              Research budgets (structural): {budgets.max_searches} searches ·{' '}
+              Assistant research budgets: {budgets.max_searches} searches ·{' '}
               {budgets.max_fetches} fetches · {budgets.max_rounds} rounds — the UI cannot
               raise them.
             </p>
