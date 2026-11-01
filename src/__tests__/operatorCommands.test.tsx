@@ -1,6 +1,6 @@
 import {afterEach,describe,it,expect,vi} from 'vitest';
 import {renderToStaticMarkup} from 'react-dom/server';
-import {fetchDesktopCommands,executeOperatorCommand,normalizeCommand,filterCommands,type GovernedCommand} from '../services/commandsApi';
+import {fetchDesktopCommands,executeOperatorCommand,normalizeCommand,filterCommands,resolveCommandInput,type GovernedCommand} from '../services/commandsApi';
 import {GovernedDetail} from '../pages/CommandsPage';
 import CommandCatalogue from '../components/commands/CommandCatalogue';
 
@@ -10,6 +10,18 @@ const operator:GovernedCommand={name:'threads',original_name:'threads',execution
  state:'EXECUTABLE',risk_class:'READ_ONLY',side_effect_level:'NONE',requires_authorization:false,execution_enabled:true};
 
 describe('original operator commands',()=>{
+ it('dispatches a typed alias using its own length and preserves argument case',()=>{
+  const command=normalizeCommand({label:'knowledge stats',cmd:'knowledge stats',aliases:['kb-stats']},'memory');
+  const invocation=resolveCommandInput([command],'KB-STATS MyKey');
+  expect(invocation?.command.name).toBe('knowledge stats');
+  expect(invocation?.arguments).toBe('MyKey');
+ });
+ it('chooses the longest matching alias and rejects partial words',()=>{
+  const parent=normalizeCommand({label:'knowledge',cmd:'knowledge',aliases:['kb']},'memory');
+  const child=normalizeCommand({label:'knowledge stats',cmd:'knowledge stats',aliases:['kb stats']},'memory');
+  expect(resolveCommandInput([parent,child],'kb stats AbC')?.command.name).toBe('knowledge stats');
+  expect(resolveCommandInput([parent],'kbroken')).toBeNull();
+ });
  it('does not offer a dead prepare action for an unbound catalogue entry',()=>{
   const html=renderToStaticMarkup(<CommandCatalogue commands={[{original_name:'unbound',canonical_id:'unbound',risk_class:'INTERNAL',side_effect_level:'NONE',llm_safe:false,governed_status:'OPERATOR_ONLY',classification_reason:'CLI only'}]} query="" onPrepare={()=>{}} canPrepare={()=>false}/>);
   expect(html).toContain('No desktop handler is bound');expect(html).toContain('disabled=""');
@@ -19,12 +31,12 @@ describe('original operator commands',()=>{
   expect(command.aliases).toEqual(['kb-stats']);
   expect(filterCommands([command],'kb-stats')).toEqual([command]);
  });
- it('keeps assistant metadata and adds original-only commands',async()=>{
+ it('keeps original operator spellings alongside distinct assistant tools',async()=>{
   vi.stubGlobal('fetch',vi.fn(async(url:string)=>new Response(JSON.stringify(url.endsWith('/operator')?
    {commands:[operator,{...operator,name:'knowledge stats'}]}:
    {source:'governed',capability_path:'loop',commands:[{...operator,name:'knowledge_stats',original_name:'knowledge stats',execution_channel:undefined}],count:1}))));
   const result=await fetchDesktopCommands();
-  expect(result?.commands.map(c=>c.name)).toEqual(['knowledge_stats','threads']);
+  expect(result?.commands.map(c=>c.name)).toEqual(['threads','knowledge stats','knowledge_stats']);
   expect(result?.operator_available).toBe(true);
  });
  it('submits explicit operator intent to the operator endpoint, never chat',async()=>{

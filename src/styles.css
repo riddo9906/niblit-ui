@@ -1559,3 +1559,6 @@ html[data-density=compact] .panel,html[data-density=compact] .snapshot-grid arti
 html[data-density=compact] .nav-item { padding-top:7px; padding-bottom:7px; }
 html[data-reduced-motion=true] *,html[data-reduced-motion=true] *::before,html[data-reduced-motion=true] *::after { animation-duration:0.01ms!important; transition-duration:0.01ms!important; scroll-behavior:auto!important; }
 @media(max-width:800px) { .snapshot-grid,.settings-grid { grid-template-columns:1fr; } .catalogue-table { display:block; overflow-x:auto; } }
+.memory-evidence-list article { border-top:1px solid var(--border); padding:16px 0; }
+.memory-evidence-list p { white-space:pre-wrap; overflow-wrap:anywhere; }
+.memory-citation { color:var(--text-dim); font-size:12px; }

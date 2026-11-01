@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   type CommandInfo,
-  fetchCommands,
+  fetchDesktopCommands,
+  desktopPaletteCommands,
   filterCommands,
   groupCommands,
 } from '../../services/commandsApi';
@@ -24,14 +25,23 @@ export default function CommandPalette({
   const [commands, setCommands] = useState<CommandInfo[]>([]);
   const [query, setQuery] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (open && commands.length === 0) {
-      void fetchCommands().then(setCommands);
-    }
-  }, [open, commands.length]);
+    if (!open) return;
+    let cancelled = false;
+    setLoading(true); setError('');
+    void fetchDesktopCommands().then(payload => {
+      if (cancelled) return;
+      setCommands(payload ? desktopPaletteCommands(payload) : []);
+      if (!payload) setError('Core command catalogue unavailable. Reopen after Core is ready.');
+    }).catch(() => { if (!cancelled) setError('Could not load Core commands.'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [open]);
 
   useEffect(() => {
     if (open) {
@@ -41,11 +51,11 @@ export default function CommandPalette({
     }
   }, [open]);
 
-  const filtered = useMemo(() => filterCommands(commands, query).slice(0, 40), [commands, query]);
+  const filtered = useMemo(() => filterCommands(commands, query), [commands, query]);
   const grouped = useMemo(() => groupCommands(filtered), [filtered]);
 
   // Flatten for keyboard index math while preserving grouped display order.
-  const flatList = useMemo(() => filtered, [filtered]);
+  const flatList = useMemo(() => grouped.flatMap(group => group.commands), [grouped]);
 
   useEffect(() => {
     if (activeIndex >= flatList.length) {
@@ -101,7 +111,7 @@ export default function CommandPalette({
         />
         <div className="palette__list">
           {flatList.length === 0 ? (
-            <div className="palette__empty">No matching commands.</div>
+            <div className="palette__empty" role="status">{loading ? 'Loading original Core commands…' : error || 'No matching commands.'}</div>
           ) : (
             grouped.map((group) => (
               <div key={group.category}>
@@ -118,7 +128,7 @@ export default function CommandPalette({
                       onClick={() => runCommand(command)}
                     >
                       <code>{command.label}</code>
-                      <span>{command.description}</span>
+                      <span>{command.description} {command.state && ` · ${command.state.toLowerCase().replace(/_/g, ' ')}`}</span>
                     </button>
                   );
                 })}
@@ -128,7 +138,8 @@ export default function CommandPalette({
         </div>
         <footer className="palette__hint">
           <span>↑↓ Navigate</span>
-          <span>↵ Run</span>
+          <span>↵ Prepare command</span>
+          <span>{commands.length} commands</span>
           <span>Esc Close</span>
         </footer>
       </div>

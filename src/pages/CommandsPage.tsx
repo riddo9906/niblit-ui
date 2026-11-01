@@ -14,12 +14,14 @@ import {
   fetchCommandSurface,
   fetchDesktopCommands,
   executeOperatorCommand,
+  resolveCommandInput,
   executeGovernedCommand,
   initialArgumentValues,
   parseArgumentValues,
   stateLabel,
 } from '../services/commandsApi';
 import { SectionHeader, EmptyState } from '../components/ui/States';
+import LiveToolView from '../components/LiveToolView';
 
 export interface HistoryEntry {
   id: string;
@@ -81,8 +83,8 @@ export function useCommandRunner(
   async function execute(text: string): Promise<void> {
     const trimmed = text.trim();
     if (!trimmed || pendingCommand !== null) return;
-    const known = [...commands].sort((a,b)=>b.name.length-a.name.length).find((c) => trimmed.toLowerCase() === c.name.toLowerCase()
-      || trimmed.toLowerCase().startsWith(`${c.name.toLowerCase()} `));
+    const invocation = resolveCommandInput(commands, trimmed);
+    const known = invocation?.command;
     if (!known && commands.length > 0) {
       const suggestions = filterCommands(commands, trimmed).slice(0, 3).map((c) => c.name);
       onResult({
@@ -100,7 +102,7 @@ export function useCommandRunner(
     setPendingCommand(trimmed);
     try {
       if (!known) throw new Error('Select a known command before execution.');
-      const response = await executeOperatorCommand(known.name,{text:trimmed.slice(known.name.length).trim()});
+      const response = await executeOperatorCommand(known.name,{text:invocation!.arguments});
       onResult({
         id: `${Date.now()}`,
         command: trimmed,
@@ -109,12 +111,12 @@ export function useCommandRunner(
         status: response.status,
         at: Date.now(),
       });
-    } catch {
+    } catch (error) {
       onResult({
         id: `${Date.now()}`,
         command: trimmed,
         output: '',
-        error: 'Core did not respond to the command request.',
+        error: error instanceof Error ? error.message : 'Core did not respond to the command request.',
         at: Date.now(),
       });
     } finally {
@@ -478,6 +480,7 @@ export default function CommandsPage() {
 
   return (
     <div className="commands-page">
+      <LiveToolView />
       <SectionHeader
         title="Commands"
         meta={loading ? undefined : `${commands.length} original and assistant commands`}

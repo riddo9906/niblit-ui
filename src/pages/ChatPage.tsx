@@ -12,11 +12,7 @@ import {
 import { useRuntimeStore } from '../state/runtimeStore';
 import { cn } from '../lib/utils';
 import { StatusDot, statusKind } from '../components/ui/StatusDot';
-
-interface ChatAttachment {
-  name: string;
-  content: string;
-}
+import { type ChatAttachment, indexAttachment, documentContext } from '../services/attachmentsApi';
 
 interface ChatMessage {
   id: string;
@@ -80,6 +76,16 @@ export default function ChatPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
+  const [activeDocuments, setActiveDocuments] = useState<ChatAttachment[]>([]);
+  const [attachmentBusy, setAttachmentBusy] = useState(false);
+  const [apiBudget, setApiBudget] = useState<{ remaining_usd: number; per_request_limit_usd: number; max_output_tokens: number } | null>(null);
+  async function refreshBudget() {
+    try {
+      const response = await fetch(apiUrl('/api/inference/budget'));
+      if (response.ok) setApiBudget(await response.json());
+    } catch { setApiBudget(null); }
+  }
+  useEffect(() => { if (selectedModel.startsWith('openai/')) void refreshBudget(); }, [selectedModel]);
   const abortRef = useRef<AbortController | null>(null);
   const logRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -124,26 +130,26 @@ export default function ChatPage() {
     );
   }
 
-  async function runRuntimeChat(text: string, assistantId: string, signal: AbortSignal) {
-    const context = attachments.map(file => `--- attached: ${file.name} ---\n${file.content}`).join('\n\n');
-    const response = await sendChat(context ? `${text}\n\n${context}` : text, signal);
+  async function runRuntimeChat(text: string, assistantId: string, signal: AbortSignal, documents: ChatAttachment[]) {
+    const response = await sendChat(text, signal, selectedModel || undefined, documents.map(document => document.id));
     if (response.error) {
       setError(response.error);
     }
-    updateAssistantText(assistantId, response.reply || response.error || '[no response]', false);
+    const citations = response.document_sources?.map(source => `${source.name}: pages ${source.pages_selected.join(', ')}`).join('; ');
+    const cost = response.estimated_cost_usd;
+    const usage = cost != null ? `\n\nAPI usage: ${response.usage?.input_tokens ?? '?'} input / ${response.usage?.output_tokens ?? '?'} output tokens (including reasoning). Estimated model charge: $${cost.toFixed(4)}.` : '';
+    updateAssistantText(assistantId, (response.reply || response.error || '[no response]') + (citations ? `\n\nDocument excerpts: ${citations}` : '') + usage, false);
   }
 
-  async function runInferenceChat(text: string, assistantId: string, signal: AbortSignal) {
+  async function runInferenceChat(text: string, assistantId: string, signal: AbortSignal, documents: ChatAttachment[]) {
     const history: CloudChatMessage[] = messages
       .filter((message) => message.role === 'user' || message.role === 'assistant')
       .map((message) => ({
         role: message.role as 'user' | 'assistant',
         content: message.text,
       }));
-    const attachmentContext = attachments
-      .map((file) => `--- attached: ${file.name} ---\n${file.content}`)
-      .join('\n\n');
-    history.push({ role: 'user', content: attachmentContext ? `${attachmentContext}\n\n${text}` : text });
+    const attachmentContext = await documentContext(documents, text, signal);
+    history.push({ role: 'user', content: attachmentContext + text });
 
     let accumulated = '';
     await streamInferenceChat(history, selectedModel, (token) => {
@@ -179,7 +185,7 @@ export default function ChatPage() {
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
     const text = input.trim();
-    if (!text || busy) {
+    if (!text || busy || attachmentBusy) {
       return;
     }
     setInput('');
@@ -187,6 +193,8 @@ export default function ChatPage() {
     setBusy(true);
     const controller = new AbortController();
     abortRef.current = controller;
+    const documents = attachments.length ? attachments : activeDocuments;
+    if (attachments.length) setActiveDocuments(attachments);
 
     const userMessage: ChatMessage = {
       id: `u-${Date.now()}`,
@@ -205,9 +213,9 @@ export default function ChatPage() {
 
     try {
       if (chatMode === 'inference' && models.length > 0) {
-        await runInferenceChat(text, assistantId, controller.signal);
+        await runInferenceChat(text, assistantId, controller.signal, documents);
       } else {
-        await runRuntimeChat(text, assistantId, controller.signal);
+        await runRuntimeChat(text, assistantId, controller.signal, documents);
       }
     } catch (submitError) {
       if ((submitError as Error).name === 'AbortError') {
@@ -226,20 +234,23 @@ export default function ChatPage() {
     } finally {
       setBusy(false);
       abortRef.current = null;
+      if (selectedModel.startsWith('openai/')) void refreshBudget();
     }
   }
 
   async function onAttachFiles(files: FileList | null) {
     if (!files || files.length === 0) return;
+    setAttachmentBusy(true); setError('');
     const loaded: ChatAttachment[] = [];
     for (const file of Array.from(files).slice(0, 4)) {
       try {
-        loaded.push({ name: file.name, content: (await file.text()).slice(0, 200_000) });
-      } catch {
-        setError(`Could not read ${file.name}`);
+        loaded.push(await indexAttachment(file));
+      } catch (error) {
+        setError(error instanceof Error ? error.message : `Could not read ${file.name}`);
       }
     }
     setAttachments((current) => [...current, ...loaded].slice(0, 4));
+    setAttachmentBusy(false);
     if (fileRef.current) {
       fileRef.current.value = '';
     }
@@ -261,7 +272,7 @@ export default function ChatPage() {
           <span className="chat-header__mode">
             {chatMode === 'inference'
               ? `Inference · Selected ${selectedModel || 'no model'}`
-              : 'Runtime · Core dispatch'}
+              : `Core commands + conversation${selectedModel ? ` · ${selectedModel}` : ' · model unavailable'}`}
           </span>
           {executedModel && (
             <span className="chat-header__mode chat-header__mode--meta">
@@ -366,6 +377,9 @@ export default function ChatPage() {
       ) : null}
 
       <div className="chat-composer">
+        {selectedModel.startsWith('openai/') && <p>Paid API model. {apiBudget ? `Niblit budget: $${apiBudget.remaining_usd.toFixed(2)} left · max $${apiBudget.per_request_limit_usd.toFixed(2)} per request · ${apiBudget.max_output_tokens} output tokens.` : 'Budget status unavailable.'} Browser agent sessions and other apps are outside this local budget.</p>}
+        {attachmentBusy && <p role="status">Reading and indexing attachment pages locally…</p>}
+        {activeDocuments.length > 0 && <p>Document context: {activeDocuments.map(file => file.name).join(', ')} · relevant excerpts retrieved for each question. <button type="button" onClick={() => setActiveDocuments([])}>Clear document context</button></p>}
         {attachments.length > 0 && (
           <div className="chat-composer__attachments">
             {attachments.map((file) => (
@@ -373,10 +387,10 @@ export default function ChatPage() {
                 key={file.name}
                 type="button"
                 className="chat-attach-chip"
-                title="Click to remove attachment"
+                title={`${file.pages_indexed} of ${file.page_count} pages indexed${file.truncated ? ' · partial index' : ''}. Click to remove.`}
                 onClick={() => setAttachments((current) => current.filter((item) => item.name !== file.name))}
               >
-                ⎘ {file.name} ×
+                ⎘ {file.name} · {file.pages_indexed}/{file.page_count} pages{file.truncated ? ' · partial' : ''} ×
               </button>
             ))}
           </div>
@@ -400,10 +414,11 @@ export default function ChatPage() {
             ref={fileRef}
             type="file"
             multiple
+            accept=".pdf,.txt,.md,.py,.js,.ts,.tsx,.jsx,.json,.csv,.rst,.html,.css,.xml,.yaml,.yml,.log"
             hidden
             onChange={(event) => void onAttachFiles(event.target.files)}
           />
-          <button type="button" className="chat-tool-btn" onClick={() => fileRef.current?.click()}>
+          <button type="button" className="chat-tool-btn" disabled={busy || attachmentBusy} onClick={() => fileRef.current?.click()}>
             + Attach
           </button>
           <span className="chat-tool-hint">Commands ⌘ Ctrl+K</span>
@@ -417,7 +432,7 @@ export default function ChatPage() {
               type="button"
               className="chat-send-btn"
               onClick={(event) => void onSubmit(event)}
-              disabled={!input.trim() || busy}
+              disabled={!input.trim() || busy || attachmentBusy}
             >
               Send ↑
             </button>

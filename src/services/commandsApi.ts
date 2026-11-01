@@ -39,6 +39,7 @@ export interface CommandInfo {
   aliases: string[];
   /** Where the metadata came from. Always the Core catalogue. */
   source: 'core-catalogue';
+  state?: CommandState;
 }
 
 function argumentHintOf(label: string): string | undefined {
@@ -273,10 +274,31 @@ export async function fetchDesktopCommands(): Promise<GovernedRegistryResponse |
   ]);
   const operator = response?.ok ? await response.json() as {commands: GovernedCommand[]} : null;
   if (!governed && !operator) return null;
-  const known = new Set((governed?.commands || []).map(c => c.original_name || c.name));
-  const commands = [...(governed?.commands || []), ...(operator?.commands || []).filter(c => !known.has(c.name))];
+  // Desktop selections must retain the original operator spelling/handler.
+  // An assistant tool's original_name must not hide that operator command.
+  const known = new Set((operator?.commands || []).map(c => c.name));
+  const commands = [...(operator?.commands || []), ...(governed?.commands || []).filter(c => !known.has(c.name))];
   return {source:'original_operator_handlers',capability_path:'Core command handlers',...governed,
     commands,count:commands.length,operator_available:!!operator};
+}
+
+export function desktopPaletteCommands(payload: GovernedRegistryResponse): CommandInfo[] {
+  return payload.commands.map(command => ({
+    name: command.name, label: command.name, category: command.category || 'Core',
+    description: command.description, requiresInput: Boolean(command.input_schema.required?.length),
+    argumentHint: Object.keys(command.input_schema.properties || {}).join(', '),
+    aliases: command.aliases || [], source: 'core-catalogue', state: command.state,
+  }));
+}
+
+export function resolveCommandInput(commands: CommandInfo[], text: string): { command: CommandInfo; arguments: string } | null {
+  const input = text.trim();
+  const matches = commands.flatMap(command => [command.name, ...(command.aliases || [])]
+    .filter(name => input.toLowerCase() === name.toLowerCase() || input.toLowerCase().startsWith(name.toLowerCase() + ' '))
+    .map(name => ({ command, name })));
+  matches.sort((a, b) => b.name.length - a.name.length);
+  const match = matches[0];
+  return match ? { command: match.command, arguments: input.slice(match.name.length).trim() } : null;
 }
 
 export async function executeOperatorCommand(name: string,args: Record<string,unknown>): Promise<CommandExecutionResult> {
