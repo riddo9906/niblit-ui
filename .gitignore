@@ -57,3 +57,17 @@ test-results/
 .DS_Store
 Thumbs.db
 Desktop.ini
+
+# Generated bundles and local credential files
+src-tauri/gen/schemas/
+*.msi
+*.msix
+*.dmg
+*.pem
+*.key
+
+# Local authentication material; never hide application source or templates.
+/.secrets/
+*.token
+*.pfx
+*.p12
