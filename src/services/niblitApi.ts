@@ -3,6 +3,9 @@ import { readPreferences } from '../lib/preferences';
 
 export interface ChatResponse {
   reply: string;
+  model?: string;
+  assistant?: string;
+  memory_retrieval?: { enabled?: boolean; issues?: string[]; citations?: string[]; reason?: string };
   error?: string;
   document_sources?: Array<{ name: string; pages_selected: number[] }>;
   usage?: { input_tokens?: number; output_tokens?: number };
@@ -74,7 +77,7 @@ export async function sendChat(text: string, signal?: AbortSignal, model?: strin
   if (!response.ok) {
     return { reply: '', error: responseText(payload.error) || `HTTP ${response.status}` };
   }
-  return { reply: responseText(payload.reply), document_sources: payload.document_sources,
+  return { reply: responseText(payload.reply), model:payload.model, assistant:payload.assistant, memory_retrieval:payload.memory_retrieval, document_sources: payload.document_sources,
     usage: payload.usage, estimated_cost_usd: payload.estimated_cost_usd };
 }
 

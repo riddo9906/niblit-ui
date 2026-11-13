@@ -135,10 +135,12 @@ export default function ChatPage() {
     if (response.error) {
       setError(response.error);
     }
+    if(response.model) setExecutedModel(response.model);
     const citations = response.document_sources?.map(source => `${source.name}: pages ${source.pages_selected.join(', ')}`).join('; ');
     const cost = response.estimated_cost_usd;
     const usage = cost != null ? `\n\nAPI usage: ${response.usage?.input_tokens ?? '?'} input / ${response.usage?.output_tokens ?? '?'} output tokens (including reasoning). Estimated model charge: $${cost.toFixed(4)}.` : '';
-    updateAssistantText(assistantId, (response.reply || response.error || '[no response]') + (citations ? `\n\nDocument excerpts: ${citations}` : '') + usage, false);
+    const diagnostics=response.assistant==='niblit' ? `\n\n[Niblit · ${response.model || 'model unavailable'} · memory ${response.memory_retrieval?.reason === 'not_needed_for_greeting' ? 'not needed for greeting' : response.memory_retrieval?.issues?.length ? 'degraded' : response.memory_retrieval?.enabled ? 'retrieval available' : 'unavailable'} · Core governed]` : '';
+    updateAssistantText(assistantId, (response.reply || response.error || '[no response]') + (citations ? `\n\nDocument excerpts: ${citations}` : '') + usage + diagnostics, false);
   }
 
   async function runInferenceChat(text: string, assistantId: string, signal: AbortSignal, documents: ChatAttachment[]) {
@@ -212,7 +214,7 @@ export default function ChatPage() {
     setAttachments([]);
 
     try {
-      if (chatMode === 'inference' && models.length > 0) {
+      if (selectedModel !== 'niblit' && chatMode === 'inference' && models.length > 0) {
         await runInferenceChat(text, assistantId, controller.signal, documents);
       } else {
         await runRuntimeChat(text, assistantId, controller.signal, documents);
@@ -270,13 +272,13 @@ export default function ChatPage() {
         <div className="chat-header__identity">
           <span className="chat-header__title">Niblit</span>
           <span className="chat-header__mode">
-            {chatMode === 'inference'
+            {selectedModel === 'niblit' ? 'Niblit — Unified Cognitive Assistant · governed Core routing' : chatMode === 'inference'
               ? `Inference · Selected ${selectedModel || 'no model'}`
               : `Core commands + conversation${selectedModel ? ` · ${selectedModel}` : ' · model unavailable'}`}
           </span>
           {executedModel && (
             <span className="chat-header__mode chat-header__mode--meta">
-              {executedModel === selectedModel
+              {!executedMeta?.fallback || selectedModel === 'niblit'
                 ? `Executed ${executedModel}`
                 : `Executed ${executedModel || '?'} (fallback${executedMeta?.fallbackReason ? `: ${executedMeta.fallbackReason}` : ''})`}
             </span>
@@ -288,7 +290,7 @@ export default function ChatPage() {
             <option value="runtime">Niblit assistant</option>
             <option value="inference" disabled={!models.length}>Model chat</option>
           </select>
-          {models.length > 0 && (
+          {(models.length > 0 || chatMode === 'runtime') && (
             <select
               className="chat-header__select"
               value={selectedModel}
@@ -297,6 +299,7 @@ export default function ChatPage() {
               }}
               aria-label="Inference model"
             >
+              <option value="niblit">Niblit — Unified Cognitive Assistant</option>
               {models.map((model) => (
                 <option key={model} value={model}>{model}</option>
               ))}
@@ -311,7 +314,7 @@ export default function ChatPage() {
 
       <div className="runtime-strip" aria-live="polite">
         <span className={cn('runtime-dot', activity.key === 'idle' && 'runtime-dot--idle')} />
-        <span>{activity.label}</span>
+        <span>{busy && selectedModel === 'niblit' ? 'Waiting for governed inference or generating…' : activity.label}</span>
         {activity.key !== 'idle' && <span className="runtime-strip__pulse" aria-hidden="true" />}
       </div>
 
