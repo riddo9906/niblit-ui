@@ -65,3 +65,9 @@ src-tauri/gen/schemas/
 *.dmg
 *.pem
 *.key
+
+# Local authentication material; never hide application source or templates.
+/.secrets/
+*.token
+*.pfx
+*.p12
