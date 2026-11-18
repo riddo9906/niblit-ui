@@ -73,7 +73,9 @@ export function startApiRuntimeConnector(options: ConnectorOptions): () => void 
     try {
       const response = await fetch(apiUrl('/api/desktop/overview'), { signal: controller.signal });
       if (response.ok) snapshot = await response.json();
-    } catch { /* show disconnected state; never substitute simulated health */ }
+    } catch (error) {
+      options.pushEvent(createRuntimeEvent({type:'runtime.warning',source:'system',payload:{message:String(error),endpoint:apiUrl('/api/desktop/overview'),retry:'Bounded 8-second request; next scheduled poll'}}));
+    }
     finally { window.clearTimeout(timeout); polling = false; }
     if (disposed) return;
 

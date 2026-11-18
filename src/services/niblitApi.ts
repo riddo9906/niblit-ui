@@ -1,3 +1,4 @@
+import { desktopBinding } from '../runtimeBinding';
 import { API_BASE_URL, apiUrl } from '../config/api';
 import { readPreferences } from '../lib/preferences';
 
@@ -5,6 +6,7 @@ export interface ChatResponse {
   reply: string;
   model?: string;
   assistant?: string;
+  niblit_model?: { generation_performed?: boolean; executed_model?: string | null; fallback?: boolean };
   memory_retrieval?: { enabled?: boolean; issues?: string[]; citations?: string[]; reason?: string };
   error?: string;
   document_sources?: Array<{ name: string; pages_selected: number[] }>;
@@ -66,18 +68,44 @@ export async function fetchRuntimeStatus(): Promise<RuntimeStatus | null> {
   }
 }
 
-export async function sendChat(text: string, signal?: AbortSignal, model?: string, attachmentIds: string[] = []): Promise<ChatResponse> {
+function researchSession(): string {
+  let session = sessionStorage.getItem('niblitResearchSession');
+  if (!session) {
+    session = crypto.randomUUID() + crypto.randomUUID();
+    sessionStorage.setItem('niblitResearchSession', session);
+  }
+  return session;
+}
+
+export interface ResearchReceipt {
+  job_id: string; status: string; terminal: boolean; acknowledged?: boolean;
+  phase: string; reason?: string; accepted_records?: number;
+}
+
+export async function researchReceipt(jobId: string, cancel = false): Promise<ResearchReceipt> {
+  const response = await fetch(apiUrl(cancel ? '/chat/research/cancel' : `/chat/research/${encodeURIComponent(jobId)}`), {
+    method: cancel ? 'POST' : 'GET',
+    headers: { 'Content-Type': 'application/json', 'X-Niblit-Research-Session': researchSession() },
+    ...(cancel ? { body: JSON.stringify({ job_id: jobId }) } : {}),
+    signal: AbortSignal.timeout(20000),
+  });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(responseText(payload.error) || `HTTP ${response.status}`);
+  return payload as ResearchReceipt;
+}
+
+export async function sendChat(text: string, signal?: AbortSignal, model?: string, attachmentIds: string[] = [], requestId?: string): Promise<ChatResponse> {
   const response = await fetch(apiUrl('/chat'), {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, ...(model ? { model, use_model: true } : {}), ...(attachmentIds.length ? { attachment_ids: attachmentIds } : {}) }),
+    headers: { 'Content-Type': 'application/json', ...(model === 'niblit' && requestId ? { 'X-Niblit-Research-Session': researchSession() } : {}) },
+    body: JSON.stringify({ text, ...(requestId ? { request_id: requestId } : {}), ...(model ? { model, use_model: true } : {}), ...(attachmentIds.length ? { attachment_ids: attachmentIds } : {}) }),
     signal,
   });
   const payload = (await response.json()) as ChatResponse & { error?: string };
   if (!response.ok) {
     return { reply: '', error: responseText(payload.error) || `HTTP ${response.status}` };
   }
-  return { reply: responseText(payload.reply), model:payload.model, assistant:payload.assistant, memory_retrieval:payload.memory_retrieval, document_sources: payload.document_sources,
+  return { reply: responseText(payload.reply), model:payload.model, assistant:payload.assistant, niblit_model:payload.niblit_model, memory_retrieval:payload.memory_retrieval, document_sources: payload.document_sources,
     usage: payload.usage, estimated_cost_usd: payload.estimated_cost_usd };
 }
 
@@ -211,27 +239,30 @@ export function openRuntimeWebSocket(
   onError?: (message: string) => void,
 ): () => void {
   const wsBase = API_BASE_URL.replace(/^http/, 'ws');
-  const socket = new WebSocket(`${wsBase}/ws/runtime`);
+  const instance = desktopBinding()?.instance;
+  const url = `${wsBase}/ws/runtime${instance ? '?desktop_instance=' + encodeURIComponent(instance) : ''}`;
+  let socket: WebSocket | undefined;
   let closed = false;
-
-  socket.onmessage = (event) => {
-    try {
-      const frame = JSON.parse(String(event.data)) as Record<string, unknown>;
-      onFrame(frame);
-    } catch {
-      onError?.('Malformed runtime stream frame');
-    }
-  };
-
-  socket.onerror = () => onError?.('Runtime WebSocket error');
-  socket.onclose = () => {
-    if (!closed) {
-      onError?.('Runtime WebSocket closed');
-    }
-  };
-
-  return () => {
-    closed = true;
-    socket.close();
-  };
+  let failures = 0;
+  let retry: ReturnType<typeof setTimeout> | undefined;
+  function connect() {
+    if (closed) return;
+    socket = new WebSocket(url);
+    socket.onopen = () => { failures = 0; };
+    socket.onmessage = (event) => {
+      try { onFrame(JSON.parse(String(event.data)) as Record<string, unknown>); }
+      catch { onError?.('Malformed runtime stream frame'); }
+    };
+    socket.onerror = () => onError?.('Runtime stream unavailable; HTTP status polling remains active');
+    socket.onclose = (event) => {
+      if (closed) return;
+      if (event.code === 1008) { onError?.('Runtime stream identity rejected; relaunch through its owning Core'); return; }
+      if (++failures > 6) { onError?.('Runtime stream retry limit reached; continuing bounded HTTP polling'); return; }
+      const delay = Math.min(30000, 1000 * 2 ** (failures - 1));
+      onError?.(`Runtime stream disconnected; retry ${failures}/6 in ${delay / 1000}s`);
+      retry = setTimeout(connect, delay);
+    };
+  }
+  connect();
+  return () => { closed = true; if (retry) clearTimeout(retry); socket?.close(); };
 }

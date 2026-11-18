@@ -5,9 +5,12 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   const apiTarget = env.VITE_NIBLIT_API_URL || 'http://127.0.0.1:8080';
   const cloudTarget = env.VITE_NIBLIT_CLOUD_URL || 'http://127.0.0.1:8000';
+  const output = process.env.NIBLIT_UI_DIST_DIR;
 
   return {
     plugins: [react()],
+    ...(output ? { build: { outDir: output, emptyOutDir: false }, cacheDir: process.env.NIBLIT_BUILD_WORK_DIR
+      ? `${process.env.NIBLIT_BUILD_WORK_DIR}/vite-cache` : undefined } : {}),
     server: {
       port: Number(env.NIBLIT_UI_PORT || 5173),
       watch: {

@@ -1,7 +1,8 @@
+import { desktopBinding } from '../runtimeBinding';
 const trimSlash = (value: string) => value.replace(/\/+$/, '');
 
 export const API_BASE_URL = trimSlash(
-  readPreferences().coreUrl,
+  desktopBinding()?.core_url || readPreferences().coreUrl,
 );
 
 /** CLOUD_BASE_URL is always a SERVER ROOT (no /v1 suffix). An OpenAI-style
@@ -16,7 +17,7 @@ const normalizeCloudRoot = (value: string) => {
 };
 
 export const CLOUD_BASE_URL = normalizeCloudRoot(
-  import.meta.env.VITE_NIBLIT_CLOUD_URL || 'http://127.0.0.1:8000',
+  desktopBinding()?.cloud_url || import.meta.env.VITE_NIBLIT_CLOUD_URL || 'http://127.0.0.1:8000',
 );
 
 export const USE_DEMO_CONNECTOR = import.meta.env.VITE_NIBLIT_USE_DEMO === '1';

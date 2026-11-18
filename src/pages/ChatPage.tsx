@@ -6,6 +6,7 @@ import {
   CloudChatMessage,
   fetchInferenceModels,
   sendChat,
+  researchReceipt,
   responseText,
   streamInferenceChat,
 } from '../services/niblitApi';
@@ -63,7 +64,7 @@ export default function ChatPage() {
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [models, setModels] = useState<string[]>([]);
-  const [selectedModel, setSelectedModel] = useState('');
+  const [selectedModel, setSelectedModel] = useState('niblit');
   const [executedModel, setExecutedModel] = useState<string | null>(null);
   const [executedMeta, setExecutedMeta] = useState<{
     requested?: string | null;
@@ -87,6 +88,9 @@ export default function ChatPage() {
   }
   useEffect(() => { if (selectedModel.startsWith('openai/')) void refreshBudget(); }, [selectedModel]);
   const abortRef = useRef<AbortController | null>(null);
+  const researchRef = useRef<{ jobId: string; assistantId: string } | null>(null);
+  const cancellingRef = useRef(false);
+  const researchCancellationRef = useRef<string | null>(null);
   const logRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -107,7 +111,7 @@ export default function ChatPage() {
       const ids = items.map((item) => item.id).filter(Boolean);
       setModels(ids);
       if (ids.length > 0) {
-        setSelectedModel(ids.includes(preferences.defaultModel) ? preferences.defaultModel : ids[0]);
+        setSelectedModel(preferences.defaultModel === 'niblit' || ids.includes(preferences.defaultModel) ? preferences.defaultModel : 'niblit');
       } else {
         setChatMode('runtime');
       }
@@ -131,15 +135,18 @@ export default function ChatPage() {
   }
 
   async function runRuntimeChat(text: string, assistantId: string, signal: AbortSignal, documents: ChatAttachment[]) {
-    const response = await sendChat(text, signal, selectedModel || undefined, documents.map(document => document.id));
+    const requestId = crypto.randomUUID();
+    if (selectedModel === 'niblit' && /^(?:please )?research\b/i.test(text)) researchRef.current = { jobId: requestId, assistantId };
+    const response = await sendChat(text, signal, selectedModel || undefined, documents.map(document => document.id), requestId);
+    if (researchCancellationRef.current === assistantId) return;
     if (response.error) {
       setError(response.error);
     }
-    if(response.model) setExecutedModel(response.model);
+    setExecutedModel(response.niblit_model?.generation_performed === false ? null : response.model || null);
     const citations = response.document_sources?.map(source => `${source.name}: pages ${source.pages_selected.join(', ')}`).join('; ');
     const cost = response.estimated_cost_usd;
     const usage = cost != null ? `\n\nAPI usage: ${response.usage?.input_tokens ?? '?'} input / ${response.usage?.output_tokens ?? '?'} output tokens (including reasoning). Estimated model charge: $${cost.toFixed(4)}.` : '';
-    const diagnostics=response.assistant==='niblit' ? `\n\n[Niblit · ${response.model || 'model unavailable'} · memory ${response.memory_retrieval?.reason === 'not_needed_for_greeting' ? 'not needed for greeting' : response.memory_retrieval?.issues?.length ? 'degraded' : response.memory_retrieval?.enabled ? 'retrieval available' : 'unavailable'} · Core governed]` : '';
+    const diagnostics=response.assistant==='niblit' ? `\n\n[Niblit · ${response.niblit_model?.generation_performed === false ? 'Core evidence — no model generation' : response.model || 'model unavailable'} · memory ${response.memory_retrieval?.reason === 'not_needed_for_greeting' ? 'not needed for greeting' : response.memory_retrieval?.reason === 'current_runtime_evidence' ? 'not needed for runtime evidence' : response.memory_retrieval?.issues?.length ? 'degraded' : response.memory_retrieval?.enabled ? 'retrieval available' : 'unavailable'} · Core governed]` : '';
     updateAssistantText(assistantId, (response.reply || response.error || '[no response]') + (citations ? `\n\nDocument excerpts: ${citations}` : '') + usage + diagnostics, false);
   }
 
@@ -171,7 +178,37 @@ export default function ChatPage() {
   }
 
   /** Abort an in-flight generation. Partial output is preserved and marked. */
-  function stop() {
+  async function stop() {
+    const research = researchRef.current;
+    if (research) {
+      if (cancellingRef.current) return;
+      cancellingRef.current = true;
+      researchCancellationRef.current = research.assistantId;
+      updateAssistantText(research.assistantId, `Cancellation requested for research ${research.jobId}; waiting for backend acknowledgment…`, true);
+      try {
+        let receipt: Awaited<ReturnType<typeof researchReceipt>>;
+        // Stop can be pressed before the admission response reaches the UI.
+        for (let attempt = 0; ; attempt++) {
+          try { receipt = await researchReceipt(research.jobId, true); break; }
+          catch (error) {
+            if (attempt >= 5 || !(error instanceof Error) || !error.message.includes('research_job_unavailable')) throw error;
+            await new Promise(resolve => setTimeout(resolve, 200));
+          }
+        }
+        const deadline = Date.now() + 45000;
+        while (!receipt.terminal && Date.now() < deadline) {
+          await new Promise(resolve => setTimeout(resolve, 250));
+          receipt = await researchReceipt(research.jobId);
+        }
+        updateAssistantText(research.assistantId, `Research ${receipt.job_id}: ${receipt.status}. ${receipt.terminal ? 'Backend terminal receipt received.' : 'Backend completion remains UNKNOWN.'} Valid observations retained: ${receipt.accepted_records ?? 0}.`, false);
+      } catch (error) {
+        updateAssistantText(research.assistantId, `Backend research cancellation could not be confirmed: ${error instanceof Error ? error.message : 'UNKNOWN'}.`, false);
+      } finally {
+        abortRef.current?.abort(); abortRef.current = null;
+        researchRef.current = null; cancellingRef.current = false; setBusy(false);
+      }
+      return;
+    }
     abortRef.current?.abort();
     abortRef.current = null;
     setBusy(false);
@@ -221,7 +258,7 @@ export default function ChatPage() {
       }
     } catch (submitError) {
       if ((submitError as Error).name === 'AbortError') {
-        updateAssistantText(assistantId, '[stopped]', false);
+        if (researchCancellationRef.current !== assistantId) updateAssistantText(assistantId, '[stopped]', false);
       } else {
         const message = submitError instanceof Error ? submitError.message : String(submitError);
         setError(message);
@@ -234,8 +271,11 @@ export default function ChatPage() {
         );
       }
     } finally {
-      setBusy(false);
-      abortRef.current = null;
+      if (!cancellingRef.current && abortRef.current === controller) {
+        setBusy(false);
+        if (abortRef.current === controller) abortRef.current = null;
+        if (researchRef.current?.assistantId === assistantId) researchRef.current = null;
+      }
       if (selectedModel.startsWith('openai/')) void refreshBudget();
     }
   }
@@ -445,3 +485,4 @@ export default function ChatPage() {
     </div>
   );
 }
+

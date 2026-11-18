@@ -1,3 +1,4 @@
+import { desktopBinding } from '../runtimeBinding';
 import { useEffect, useState } from 'react';
 
 export interface Preferences {
@@ -12,7 +13,9 @@ export const defaultPreferences: Preferences = {
   liveUpdates: true, refreshSeconds: 10, eventLimit: 200, showRaw: false,
   confirmActions: true, sendOnEnter: true, defaultModel: '', temperature: 0.2, maxTokens: 512,
 };
-const KEY = 'niblit.preferences.v1';
+const LEGACY_KEY = 'niblit.preferences.v1';
+const RELEASE_PROFILE = import.meta.env.VITE_NIBLIT_RELEASE_PROFILE || '';
+const KEY = LEGACY_KEY + (RELEASE_PROFILE ? ':' + RELEASE_PROFILE : '');
 const clamp = (value: unknown, fallback: number, min: number, max: number) =>
   typeof value === 'number' && Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : fallback;
 export function validateCoreUrl(value: string): string {
@@ -25,7 +28,7 @@ export function validateCoreUrl(value: string): string {
 }
 export function normalizePreferences(value: Partial<Preferences>): Preferences {
   const p = { ...defaultPreferences, ...value };
-  p.coreUrl = validateCoreUrl(p.coreUrl);
+  p.coreUrl = desktopBinding()?.core_url || validateCoreUrl(p.coreUrl);
   p.theme = value.theme === 'light' ? 'light' : 'dark';
   p.density = value.density === 'compact' ? 'compact' : 'comfortable';
   p.textScale = clamp(value.textScale, 100, 85, 125);
@@ -40,7 +43,15 @@ export function normalizePreferences(value: Partial<Preferences>): Preferences {
   return p;
 }
 export function readPreferences(): Preferences {
-  try { return normalizePreferences(JSON.parse(localStorage.getItem(KEY) || '{}')); }
+  try {
+    const stored = localStorage.getItem(KEY);
+    if (!stored && RELEASE_PROFILE) {
+      const previous = JSON.parse(localStorage.getItem(LEGACY_KEY) || '{}');
+      // Keep presentation preferences, while binding this release to its own Core.
+      return normalizePreferences({ ...previous, coreUrl: defaultPreferences.coreUrl });
+    }
+    return normalizePreferences(JSON.parse(stored || '{}'));
+  }
   catch { return { ...defaultPreferences }; }
 }
 export function savePreferences(value: Partial<Preferences>) {
